@@ -695,7 +695,7 @@ async fn list_vaults(credential: &DeveloperToolsCredential) -> Result<Vec<(Strin
     let bearer = token.token.secret();
 
     let client = Client::new();
-    let subs_url = "https://management.azure.com/subscriptions?api-version=2020-01-01";
+    let subs_url = "https://management.azure.com/subscriptions?api-version=2022-12-01";
     let sub_resp = client.get(subs_url)
         .bearer_auth(bearer)
         .send()
