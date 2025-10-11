@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
 use std::sync::Arc;
 use std::convert::TryInto;
 
@@ -25,7 +27,11 @@ use serde_json::Value;
 use reqwest::Client;
 use throbber_widgets_tui::{Throbber, ThrobberState, WhichUse, BRAILLE_SIX};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::Semaphore;
 use tokio::task;
+use tracing::{debug, info, warn};
+use tracing_subscriber::{EnvFilter};
+use std::fs::OpenOptions;
 
 #[derive(Debug, Clone)]
 enum Modal {
@@ -46,17 +52,30 @@ enum AppScreen {
 #[derive(Debug)]
 enum AppEvent {
     VaultsLoaded(Vec<(String, String)>),
-    SecretsUpdated(Vec<String>),
+    SecretsUpdated(String, Vec<String>), // vault_name, secrets
+    CacheVaultSecrets(String, Vec<String>), // vault_name -> cached secrets (silent)
     OpenEdit(String, String),
     Message(String),
-    TokenCached(String),
+    TokenCached(Instant, Duration), // fetched_at, ttl
+}
+
+#[derive(Debug, Clone)]
+struct VaultCacheEntry {
+    secrets: Vec<String>,
+    refreshed_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCache {
+    fetched_at: Instant,
+    ttl: Duration,
 }
 
 struct App {
     screen: AppScreen,
     credential: Arc<DeveloperToolsCredential>,
     client: Option<Arc<SecretClient>>,
-    current_vault: Option<(String, String)>,
+    current_vault: Option<(String, String)>, // (name, uri)
     secrets: Vec<String>,
     displayed_secrets: Vec<String>,
     selected: usize,
@@ -69,7 +88,8 @@ struct App {
     loading: bool,
     vaults: Vec<(String, String)>,
     vault_selected: usize,
-    token_cache: Option<String>, // in-memory token cache
+    token_cache: Option<TokenCache>,                 // in-memory token cache
+    vault_secret_cache: HashMap<String, VaultCacheEntry>, // in-memory per-vault cache
 }
 
 impl App {
@@ -94,21 +114,38 @@ impl App {
             vaults: Vec::new(),
             vault_selected: 0,
             token_cache: None,
+            vault_secret_cache: HashMap::new(),
         }
     }
 
     fn selected_name(&self) -> Option<String> {
         self.displayed_secrets.get(self.selected).cloned()
     }
+
+    fn token_near_expiry(&self, threshold: Duration) -> bool {
+        if let Some(tc) = &self.token_cache {
+            let expires_at = tc.fetched_at + tc.ttl;
+            Instant::now() + threshold >= expires_at
+        } else {
+            true // no token -> needs fetch
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Credential & app
+    // tracing initialization (enable with RUST_LOG=debug)
+    // let subscriber = FmtSubscriber::builder().with_max_level(tracing::Level::DEBUG).finish();
+    // tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
+
+    init_tracing();
+
+    info!("Starting Azure Key Vault TUI");
+
     let credential = DeveloperToolsCredential::new(None)?;
     let mut app = App::new(credential.clone());
 
-    // Terminal
+    // Terminal setup
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     crossterm::terminal::enable_raw_mode()?;
@@ -118,16 +155,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Channel for background tasks -> UI
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
-    // Kick off initial vault discovery: spawn task which will also emit TokenCached
+    // Semaphore to bound concurrent preload tasks (avoid throttling)
+    let preload_concurrency = Arc::new(Semaphore::new(4)); // tune as needed
+
+    // Kick off initial discovery (will also return token info)
     {
         let tx2 = tx.clone();
         let cred = credential.clone();
         app.loading = true;
         app.message = Some("Discovering vaults...".into());
         tokio::spawn(async move {
-            match get_token_then_discover(cred, tx2.clone()).await {
-                Ok(v) => { let _ = tx2.send(AppEvent::VaultsLoaded(v)); }
-                Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e))); }
+            debug!("Initial discover task started");
+            match get_token_then_discover(cred.clone()).await {
+                Ok((token_opt, vaults)) => {
+                    if let Some((fetched_at, ttl)) = token_opt {
+                        let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                    }
+                    let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
+                }
+                Err(e) => {
+                    let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e)));
+                }
             }
         });
     }
@@ -136,7 +184,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut last_tick = Instant::now();
 
     loop {
-        // Tick: advance spinner + redraw
         if last_tick.elapsed() >= tick_rate {
             if app.loading {
                 app.throbber_state.calc_next();
@@ -145,34 +192,62 @@ async fn main() -> Result<(), Box<dyn Error>> {
             last_tick = Instant::now();
         }
 
-        // Process events from background tasks
+        // Drain events from background tasks
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 AppEvent::VaultsLoaded(v) => {
+                    debug!("VaultsLoaded: {} vaults", v.len());
                     app.vaults = v;
                     app.loading = false;
                     if app.vaults.is_empty() {
                         app.message = Some("No vaults found (press 'v' to retry)".into());
                     } else {
                         app.message = Some(format!("Discovered {} vault(s). Use ↑/↓ and Enter to select.", app.vaults.len()));
+                        // Start silent preload in background
+                        let vaults_to_preload = app.vaults.clone();
+                        let cred = app.credential.clone();
+                        let tx2 = tx.clone();
+                        let sem = preload_concurrency.clone();
+                        tokio::spawn(async move {
+                            info!("Starting background preload for {} vaults", vaults_to_preload.len());
+                            preload_all_vaults(cred, tx2, vaults_to_preload, sem).await;
+                            info!("Background preload finished");
+                        });
                     }
                 }
-                AppEvent::SecretsUpdated(s) => {
-                    app.secrets = s.clone();
-                    apply_search(&mut app);
-                    app.loading = false;
-                    app.message = Some(format!("Loaded {} secrets", app.secrets.len()));
+                AppEvent::SecretsUpdated(vault_name, secrets) => {
+                    debug!("SecretsUpdated for {} ({} items)", vault_name, secrets.len());
+                    let mut sorted = secrets.clone();
+                    sorted.sort();
+                    app.vault_secret_cache.insert(vault_name.clone(), VaultCacheEntry { secrets: sorted.clone(), refreshed_at: Instant::now() });
+                    if let Some((current_name, _)) = &app.current_vault {
+                        if *current_name == vault_name {
+                            app.secrets = sorted.clone();
+                            apply_search(&mut app);
+                            app.loading = false;
+                            app.message = Some(format!("Loaded {} secrets (from {})", app.secrets.len(), vault_name));
+                        }
+                    }
+                }
+                AppEvent::CacheVaultSecrets(vault_name, secrets) => {
+                    debug!("CacheVaultSecrets (silent) for {} ({} items)", vault_name, secrets.len());
+                    let mut sorted = secrets.clone();
+                    sorted.sort();
+                    app.vault_secret_cache.insert(vault_name, VaultCacheEntry { secrets: sorted, refreshed_at: Instant::now() });
+                    // silent, no message
                 }
                 AppEvent::OpenEdit(name, value) => {
                     app.modal = Some(Modal::Edit { name, value });
                     app.loading = false;
                 }
                 AppEvent::Message(msg) => {
+                    warn!("Background message: {}", msg);
                     app.loading = false;
                     app.message = Some(msg);
                 }
-                AppEvent::TokenCached(token) => {
-                    app.token_cache = Some(token);
+                AppEvent::TokenCached(fetched_at, ttl) => {
+                    debug!("TokenCached (ttl={:?})", ttl);
+                    app.token_cache = Some(TokenCache { fetched_at, ttl });
                 }
             }
         }
@@ -203,6 +278,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         break;
                     }
 
+                    // Token near-expiry refresh check (2 minutes threshold)
+                    if app.token_near_expiry(Duration::from_secs(120)) {
+                        debug!("Token near expiry or missing -> refreshing in background");
+                        let tx2 = tx.clone();
+                        let cred = app.credential.clone();
+                        tokio::spawn(async move {
+                            match refresh_token(cred.clone()).await {
+                                Ok((token, fetched_at, ttl)) => {
+                                    let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                }
+                                Err(e) => {
+                                    let _ = tx2.send(AppEvent::Message(format!("Failed to refresh token: {}", e)));
+                                }
+                            }
+                        });
+                    }
+
                     match app.screen {
                         AppScreen::VaultSelection => match code {
                             KeyCode::Down | KeyCode::Char('j') => {
@@ -214,50 +306,71 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 if app.vault_selected > 0 { app.vault_selected -= 1; }
                             }
                             KeyCode::Enter => {
-                                if let Some((name, url)) = app.vaults.get(app.vault_selected).cloned() {
-                                    let client = SecretClient::new(&url, app.credential.clone(), None)?;
-                                    app.client = Some(Arc::new(client));
-                                    app.current_vault = Some((name.clone(), url));
-                                    app.screen = AppScreen::Secrets;
-                                    app.loading = true;
-                                    app.message = Some("Loading secrets...".into());
-
-                                    // spawn incremental secret loader; clone tx
-                                    let tx2 = tx.clone();
-                                    let client_arc = app.client.as_ref().unwrap().clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = list_secrets_incremental(client_arc, tx2.clone()).await {
-                                            let _ = tx2.send(AppEvent::Message(format!("Failed to list secrets: {}", e)));
+                                if let Some((name, uri)) = app.vaults.get(app.vault_selected).cloned() {
+                                    app.current_vault = Some((name.clone(), uri.clone()));
+                                    // Scoped borrow: check cache availability without holding borrow across mutable calls
+                                    let cache_has_entry = app.vault_secret_cache.get(&name).map(|e| e.secrets.len()).unwrap_or(0) > 0;
+                                    if cache_has_entry {
+                                        // Use cache immediately
+                                        if let Some(entry) = app.vault_secret_cache.get(&name) {
+                                            // capture minimal data then drop borrow
+                                            let cached_secrets = entry.secrets.clone();
+                                            let refreshed_at = entry.refreshed_at;
+                                            drop(entry); // ensure borrow ends (not strictly necessary here due to clone, but explicit)
+                                            app.secrets = cached_secrets;
+                                            apply_search(&mut app);
+                                            app.screen = AppScreen::Secrets;
+                                            app.loading = false;
+                                            app.message = Some(format!("Using cached secrets for '{}'", name));
+                                            // if stale, refresh in background
+                                            let age = Instant::now().duration_since(refreshed_at);
+                                            if age > Duration::from_secs(60 * 30) {
+                                                let tx2 = tx.clone();
+                                                let client = SecretClient::new(&uri, app.credential.clone(), None)?;
+                                                let client_arc = Arc::new(client);
+                                                let name_clone = name.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = list_secrets_and_cache(client_arc, tx2.clone(), name_clone).await;
+                                                });
+                                            }
+                                        } else {
+                                            // shouldn't reach, but fallback to load incremental
+                                            app.screen = AppScreen::Secrets;
                                         }
-                                    });
+                                    } else {
+                                        // No cache: load incrementally and cache
+                                        app.screen = AppScreen::Secrets;
+                                        app.loading = true;
+                                        app.message = Some("Loading secrets...".into());
+                                        let tx2 = tx.clone();
+                                        let client = SecretClient::new(&uri, app.credential.clone(), None)?;
+                                        let client_arc = Arc::new(client);
+                                        let name_clone = name.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = list_secrets_incremental(client_arc, tx2.clone(), name_clone.clone()).await {
+                                                let _ = tx2.send(AppEvent::Message(format!("Failed to list secrets: {}", e)));
+                                            }
+                                        });
+                                    }
                                 }
                             }
                             KeyCode::Char('v') => {
-                                // Use cached vaults if available, but refresh in background
-                                if !app.vaults.is_empty() {
-                                    app.screen = AppScreen::VaultSelection;
-                                    app.message = Some("Showing cached vaults; refreshing in background...".into());
-                                    app.loading = true;
-                                    let tx2 = tx.clone();
-                                    let cred = app.credential.clone();
-                                    tokio::spawn(async move {
-                                        match get_token_then_discover(cred, tx2.clone()).await {
-                                            Ok(v) => { let _ = tx2.send(AppEvent::VaultsLoaded(v)); }
-                                            Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e))); }
+                                // Refresh vaults
+                                app.loading = true;
+                                app.message = Some("Refreshing vaults...".into());
+                                let tx2 = tx.clone();
+                                let cred = app.credential.clone();
+                                tokio::spawn(async move {
+                                    match get_token_then_discover(cred.clone()).await {
+                                        Ok((token_opt, vaults)) => {
+                                            if let Some((fetched_at, ttl)) = token_opt {
+                                                let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                            }
+                                            let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
                                         }
-                                    });
-                                } else {
-                                    app.loading = true;
-                                    app.message = Some("Discovering vaults...".into());
-                                    let tx2 = tx.clone();
-                                    let cred = app.credential.clone();
-                                    tokio::spawn(async move {
-                                        match get_token_then_discover(cred, tx2.clone()).await {
-                                            Ok(v) => { let _ = tx2.send(AppEvent::VaultsLoaded(v)); }
-                                            Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e))); }
-                                        }
-                                    });
-                                }
+                                        Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e))); }
+                                    }
+                                });
                             }
                             _ => {}
                         },
@@ -275,33 +388,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             }
                             KeyCode::Char('v') => {
-                                // back to vault selection; refresh in background
+                                // Back to vault selection and refresh vaults
                                 app.screen = AppScreen::VaultSelection;
-                                if !app.vaults.is_empty() {
-                                    app.message = Some("Showing cached vaults; refreshing in background...".into());
-                                } else {
-                                    app.message = Some("Discovering vaults...".into());
-                                }
                                 app.loading = true;
+                                app.message = Some("Refreshing vaults...".into());
                                 let tx2 = tx.clone();
                                 let cred = app.credential.clone();
                                 tokio::spawn(async move {
-                                    match get_token_then_discover(cred, tx2.clone()).await {
-                                        Ok(v) => { let _ = tx2.send(AppEvent::VaultsLoaded(v)); }
+                                    match get_token_then_discover(cred.clone()).await {
+                                        Ok((token_opt, vaults)) => {
+                                            if let Some((fetched_at, ttl)) = token_opt {
+                                                let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                            }
+                                            let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
+                                        }
                                         Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Vault discovery failed: {}", e))); }
                                     }
                                 });
                             }
                             KeyCode::Char('r') => {
-                                if app.client.is_none() {
+                                if app.current_vault.is_none() {
                                     app.message = Some("No vault selected".into());
-                                } else {
+                                } else if let Some((name, uri)) = &app.current_vault {
                                     app.loading = true;
                                     app.message = Some("Refreshing secrets...".into());
                                     let tx2 = tx.clone();
-                                    let client = app.client.as_ref().unwrap().clone();
+                                    let client = SecretClient::new(uri, app.credential.clone(), None)?;
+                                    let client_arc = Arc::new(client);
+                                    let name_clone = name.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = list_secrets_incremental(client, tx2.clone()).await {
+                                        if let Err(e) = list_secrets_incremental(client_arc, tx2.clone(), name_clone.clone()).await {
                                             let _ = tx2.send(AppEvent::Message(format!("Refresh error: {}", e)));
                                         }
                                     });
@@ -321,14 +437,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             KeyCode::Char('e') => {
                                 if let Some(name) = app.selected_name() {
-                                    if let Some(client) = &app.client {
+                                    if let Some((_, uri)) = &app.current_vault {
                                         app.loading = true;
                                         app.message = Some("Fetching secret for edit...".into());
                                         let name_clone = name.clone();
-                                        let client_cloned = client.clone();
+                                        let client = SecretClient::new(uri, app.credential.clone(), None)?;
+                                        let client_arc = Arc::new(client);
                                         let tx2 = tx.clone();
                                         tokio::spawn(async move {
-                                            match client_cloned.get_secret(&name_clone, None).await {
+                                            match client_arc.get_secret(&name_clone, None).await {
                                                 Ok(resp) => {
                                                     match resp.into_body() {
                                                         Ok(secret) => {
@@ -348,14 +465,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             KeyCode::Enter => {
                                 if let Some(name) = app.selected_name() {
-                                    if let Some(client) = &app.client {
+                                    if let Some((_, uri)) = &app.current_vault {
                                         app.loading = true;
                                         app.message = Some("Fetching secret value...".into());
                                         let name_clone = name.clone();
-                                        let client_cloned = client.clone();
+                                        let client = SecretClient::new(uri, app.credential.clone(), None)?;
+                                        let client_arc = Arc::new(client);
                                         let tx2 = tx.clone();
                                         tokio::spawn(async move {
-                                            match client_cloned.get_secret(&name_clone, None).await {
+                                            match client_arc.get_secret(&name_clone, None).await {
                                                 Ok(resp) => {
                                                     match resp.into_body() {
                                                         Ok(secret) => {
@@ -398,7 +516,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     crossterm::terminal::disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-
+    info!("Exiting Azure Key Vault TUI");
     Ok(())
 }
 
@@ -559,8 +677,7 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
     }
 }
 
-/// Handle modal keys; spawns background tasks for network operations.
-/// Always clones tx before moving into tasks to avoid move errors.
+/// Handle modal keys; background tasks clone tx to avoid move errors.
 async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<AppEvent>) -> Result<bool, Box<dyn Error>> {
     if app.modal.is_none() { return Ok(false); }
     match &mut app.modal {
@@ -572,30 +689,38 @@ async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<App
                 KeyCode::Enter => {
                     if name.is_empty() {
                         app.message = Some("Name cannot be empty".into());
-                    } else if app.client.is_none() {
+                    } else if app.current_vault.is_none() {
                         app.message = Some("No vault selected".into());
                     } else {
                         let secret_name = name.clone();
                         let secret_value = value.clone();
-                        let client = app.client.as_ref().unwrap().clone();
+                        let (vault_name, vault_uri) = app.current_vault.as_ref().unwrap().clone();
                         app.modal = None;
                         app.loading = true;
                         app.message = Some("Creating secret...".into());
                         let tx2 = tx.clone();
+                        let client = SecretClient::new(&vault_uri, app.credential.clone(), None)?;
+                        let client_arc = Arc::new(client);
                         tokio::spawn(async move {
                             let params = SetSecretParameters { value: Some(secret_value.into()), ..Default::default() };
                             match params.try_into() {
                                 Ok(p) => {
-                                    match client.set_secret(&secret_name, p, None).await {
-                                        Ok(resp) => { let _ = resp.into_body(); let _ = tx2.send(AppEvent::Message(format!("Secret '{}' created/updated", secret_name))); }
-                                        Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to set secret: {}", e))); }
+                                    match client_arc.set_secret(&secret_name, p, None).await {
+                                        Ok(resp) => {
+                                            let _ = resp.into_body();
+                                            let _ = tx2.send(AppEvent::Message(format!("Secret '{}' created/updated", secret_name)));
+                                        }
+                                        Err(e) => {
+                                            let _ = tx2.send(AppEvent::Message(format!("Failed to set secret: {}", e)));
+                                        }
                                     }
                                 }
-                                Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to prepare secret params: {}", e))); }
+                                Err(e) => {
+                                    let _ = tx2.send(AppEvent::Message(format!("Failed to prepare secret params: {}", e)));
+                                }
                             }
-                            if let Err(e) = list_secrets_incremental(client.clone(), tx2.clone()).await {
-                                let _ = tx2.send(AppEvent::Message(format!("Failed to refresh secrets: {}", e)));
-                            }
+                            // refresh and cache
+                            let _ = list_secrets_and_cache(client_arc.clone(), tx2.clone(), vault_name.clone()).await;
                         });
                     }
                 }
@@ -614,10 +739,12 @@ async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<App
                 KeyCode::Esc => { app.modal = None; }
                 KeyCode::Backspace => { value.pop(); }
                 KeyCode::Enter => {
-                    if app.client.is_none() {
+                    if app.current_vault.is_none() {
                         app.message = Some("No vault selected".into());
                     } else {
-                        let client = app.client.as_ref().unwrap().clone();
+                        let (vault_name, vault_uri) = app.current_vault.as_ref().unwrap().clone();
+                        let client = SecretClient::new(&vault_uri, app.credential.clone(), None)?;
+                        let client_arc = Arc::new(client);
                         let name_clone = name.clone();
                         let value_clone = value.clone();
                         app.modal = None;
@@ -628,16 +755,17 @@ async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<App
                             let params = SetSecretParameters { value: Some(value_clone.into()), ..Default::default() };
                             match params.try_into() {
                                 Ok(p) => {
-                                    match client.set_secret(&name_clone, p, None).await {
-                                        Ok(resp) => { let _ = resp.into_body(); let _ = tx2.send(AppEvent::Message(format!("Secret '{}' updated", name_clone))); }
+                                    match client_arc.set_secret(&name_clone, p, None).await {
+                                        Ok(resp) => {
+                                            let _ = resp.into_body();
+                                            let _ = tx2.send(AppEvent::Message(format!("Secret '{}' updated", name_clone)));
+                                        }
                                         Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to update secret: {}", e))); }
                                     }
                                 }
                                 Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to prepare secret params: {}", e))); }
                             }
-                            if let Err(e) = list_secrets_incremental(client.clone(), tx2.clone()).await {
-                                let _ = tx2.send(AppEvent::Message(format!("Failed to refresh secrets: {}", e)));
-                            }
+                            let _ = list_secrets_and_cache(client_arc.clone(), tx2.clone(), vault_name.clone()).await;
                         });
                     }
                 }
@@ -649,21 +777,21 @@ async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<App
         Some(Modal::ConfirmDelete { name }) => {
             match code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    if let Some(client) = &app.client {
-                        let client_cloned = client.clone();
+                    if let Some((vault_name, vault_uri)) = &app.current_vault {
+                        let client = SecretClient::new(vault_uri, app.credential.clone(), None)?;
+                        let client_arc = Arc::new(client);
                         let name_clone = name.clone();
+                        let vault_name = vault_name.clone();
                         app.modal = None;
                         app.loading = true;
                         app.message = Some("Deleting secret...".into());
                         let tx2 = tx.clone();
                         tokio::spawn(async move {
-                            match client_cloned.delete_secret(&name_clone, None).await {
+                            match client_arc.delete_secret(&name_clone, None).await {
                                 Ok(_) => { let _ = tx2.send(AppEvent::Message(format!("Deleted '{}'. (soft-delete)", name_clone))); }
                                 Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to delete: {}", e))); }
                             }
-                            if let Err(e) = list_secrets_incremental(client_cloned.clone(), tx2.clone()).await {
-                                let _ = tx2.send(AppEvent::Message(format!("Failed to refresh after delete: {}", e)));
-                            }
+                            let _ = list_secrets_and_cache(client_arc.clone(), tx2.clone(), vault_name.clone()).await;
                         });
                     } else {
                         app.message = Some("No vault selected".into());
@@ -679,12 +807,13 @@ async fn handle_modal_key(app: &mut App, code: KeyCode, tx: &UnboundedSender<App
     }
 }
 
-/// Incrementally list secrets and send batched updates back to the UI thread via tx.
-/// This function expects tx to be an UnboundedSender<AppEvent> (it will be cloned by callers).
-async fn list_secrets_incremental(client: Arc<SecretClient>, tx: UnboundedSender<AppEvent>) -> Result<(), Box<dyn Error>> {
+/// Incrementally list secrets and send updates for the given vault back to UI.
+/// Also sends CacheVaultSecrets for silent caching.
+async fn list_secrets_incremental(client: Arc<SecretClient>, tx: UnboundedSender<AppEvent>, vault_name: String) -> Result<(), Box<dyn Error>> {
+    debug!("Starting incremental list for vault '{}'", vault_name);
     let mut pager = client.list_secret_properties(None)?.into_stream();
     let mut names = Vec::new();
-    const BATCH: usize = 10;
+    const BATCH: usize = 20;
     while let Some(item) = pager.try_next().await? {
         if let Ok(rid) = item.resource_id() {
             names.push(rid.name);
@@ -692,35 +821,122 @@ async fn list_secrets_incremental(client: Arc<SecretClient>, tx: UnboundedSender
         if names.len() % BATCH == 0 {
             let mut sorted = names.clone();
             sorted.sort();
-            let _ = tx.send(AppEvent::SecretsUpdated(sorted));
+            let _ = tx.send(AppEvent::SecretsUpdated(vault_name.clone(), sorted.clone()));
+            let _ = tx.send(AppEvent::CacheVaultSecrets(vault_name.clone(), names.clone()));
         }
     }
     names.sort();
-    let _ = tx.send(AppEvent::SecretsUpdated(names));
+    let _ = tx.send(AppEvent::SecretsUpdated(vault_name.clone(), names.clone()));
+    let _ = tx.send(AppEvent::CacheVaultSecrets(vault_name.clone(), names));
+    debug!("Completed incremental list for vault '{}'", vault_name);
     Ok(())
 }
 
-/// Obtain token and then discover vaults (parallel across subscriptions).
-/// Emits TokenCached via tx so the main UI can store token in-memory.
-async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>, tx: UnboundedSender<AppEvent>) -> Result<Vec<(String, String)>, Box<dyn Error>> {
-    // Acquire token
-    let token = credential.get_token(&["https://management.azure.com/.default"], None).await?;
-    let bearer = token.token.secret().to_string();
-    let _ = tx.send(AppEvent::TokenCached(bearer.clone()));
+/// List secrets fully and update cache (used after write/delete to ensure cache is fresh).
+async fn list_secrets_and_cache(client: Arc<SecretClient>, tx: UnboundedSender<AppEvent>, vault_name: String) -> Result<(), Box<dyn Error>> {
+    debug!("Starting full list+cache for vault '{}'", vault_name);
+    let mut pager = client.list_secret_properties(None)?.into_stream();
+    let mut names = Vec::new();
+    while let Some(item) = pager.try_next().await? {
+        if let Ok(rid) = item.resource_id() {
+            names.push(rid.name);
+        }
+    }
+    names.sort();
+    let _ = tx.send(AppEvent::CacheVaultSecrets(vault_name.clone(), names.clone()));
+    let _ = tx.send(AppEvent::SecretsUpdated(vault_name.clone(), names));
+    debug!("Completed full list+cache for vault '{}'", vault_name);
+    Ok(())
+}
 
+/// Preload secrets for all vaults using bounded concurrency and populate cache silently.
+async fn preload_all_vaults(credential: Arc<DeveloperToolsCredential>, tx: UnboundedSender<AppEvent>, vaults: Vec<(String, String)>, sem: Arc<Semaphore>) {
+    debug!("preload_all_vaults: starting, {} vaults", vaults.len());
+    let client_cred = credential;
+    let mut handles = Vec::new();
+    for (name, uri) in vaults.into_iter() {
+        let tx2 = tx.clone();
+        let permit = sem.clone();
+        let name_clone = name.clone();
+        let uri_clone = uri.clone();
+        let cred = client_cred.clone();
+        let handle = tokio::spawn(async move {
+            let _p = permit.acquire_owned().await.expect("semaphore");
+            debug!("Preloading vault '{}' (uri={})", name_clone, uri_clone);
+            match SecretClient::new(&uri_clone, cred.clone(), None) {
+                Ok(client) => {
+                    let client_arc = Arc::new(client);
+                    if let Err(e) = list_secrets_and_cache(client_arc, tx2.clone(), name_clone.clone()).await {
+                        debug!("Preload failed for {}: {}", name_clone, e);
+                    } else {
+                        debug!("Preload succeeded for {}", name_clone);
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to create client for {}: {}", name_clone, e);
+                }
+            }
+        });
+        handles.push(handle);
+    }
+    for h in handles {
+        let _ = h.await;
+    }
+    debug!("preload_all_vaults: done");
+}
+
+/// Refresh token and return (token_string, fetched_at, ttl).
+/// Uses the SDK get_token and reads expires_on if available.
+/// Refresh token and return (token_string, fetched_at, ttl)
+async fn refresh_token(credential: Arc<DeveloperToolsCredential>) -> Result<(String, Instant, Duration), Box<dyn Error>> {
+    debug!("Refreshing token via SDK");
+    let token_response = credential
+        .get_token(&["https://management.azure.com/.default"], None)
+        .await?;
+
+    // token string
+    let token_str = token_response.token.secret().to_string();
+
+    // expires_on is OffsetDateTime (not Option) in azure-core v0.29.1
+    let expires_on: OffsetDateTime = token_response.expires_on;
+
+    // compute TTL from now
+    let now = OffsetDateTime::now_utc();
+    let ttl = if expires_on > now {
+        (expires_on - now)
+            .whole_seconds()
+            .max(1)
+            .try_into()
+            .unwrap_or(55 * 60) // fallback if conversion fails (very unlikely)
+    } else {
+        55 * 60
+    };
+
+    let fetched_at = Instant::now();
+    let ttl_duration = Duration::from_secs(ttl);
+
+    debug!("Token refreshed, ttl={:?}", ttl_duration);
+
+    Ok((token_str, fetched_at, ttl_duration))
+}
+
+/// Get token then discover vaults in ARM (parallel per-subscription). Returns optional token info and vault list.
+/// If token acquisition fails this returns Err.
+async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>) -> Result<(Option<(Instant, Duration)>, Vec<(String, String)>), Box<dyn Error>> {
+    // Acquire token
+    let (token_str, fetched_at, ttl) = refresh_token(credential.clone()).await?;
     let client = Client::new();
     let subs_url = "https://management.azure.com/subscriptions?api-version=2020-01-01";
-    let sub_resp = client.get(subs_url).bearer_auth(&bearer).send().await?;
+    let sub_resp = client.get(subs_url).bearer_auth(&token_str).send().await?;
     let subs: Value = sub_resp.json().await?;
     let mut vaults: Vec<(String, String)> = Vec::new();
 
     if let Some(arr) = subs["value"].as_array() {
-        // Build per-subscription futures
         let mut futures = Vec::new();
         for sub in arr {
             if let Some(sub_id) = sub["subscriptionId"].as_str() {
                 let client_clone = client.clone();
-                let bearer_clone = bearer.clone();
+                let bearer_clone = token_str.clone();
                 let sub_id = sub_id.to_string();
                 futures.push(async move {
                     let url = format!("https://management.azure.com/subscriptions/{}/providers/Microsoft.KeyVault/vaults?api-version=2025-05-01", sub_id);
@@ -747,6 +963,7 @@ async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>, tx: 
 
     // Fallback to az CLI executed in blocking thread if no vaults found
     if vaults.is_empty() {
+        debug!("No vaults from ARM; attempting az CLI fallback");
         if let Ok(out) = task::spawn_blocking(|| {
             Command::new("az").args(["keyvault", "list", "-o", "json"]).output()
         }).await? {
@@ -759,14 +976,18 @@ async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>, tx: 
                         }
                     }
                 }
+            } else {
+                debug!("az CLI returned non-zero status");
             }
+        } else {
+            debug!("az CLI fallback spawn failed");
         }
     }
 
-    Ok(vaults)
+    Ok((Some((fetched_at, ttl)), vaults))
 }
 
-/// Fuzzy search applied to `app.secrets` to produce `app.displayed_secrets`.
+/// Apply fuzzy search to secrets and populate displayed_secrets
 fn apply_search(app: &mut App) {
     if app.search_query.is_empty() {
         app.displayed_secrets = app.secrets.clone();
@@ -782,4 +1003,24 @@ fn apply_search(app: &mut App) {
     }
     app.selected = 0;
     app.list_state.select(Some(0));
+}
+
+
+fn init_tracing() {
+    // Open (or create) the log file in append mode
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("azure_keyvault_tui.log")
+        .expect("Unable to open log file");
+
+    // Configure tracing subscriber
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info")); // fallback to info
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)           // hide module paths if desired
+        .with_writer(file)            // log to file
+        .init();
 }
