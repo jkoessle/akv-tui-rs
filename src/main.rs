@@ -1,10 +1,12 @@
+// src/main.rs
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use time::OffsetDateTime;
 use std::sync::Arc;
 use std::convert::TryInto;
+use std::fs::OpenOptions;
+use std::env;
 
 use azure_core::credentials::TokenCredential;
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent};
@@ -30,8 +32,9 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Semaphore;
 use tokio::task;
 use tracing::{debug, info, warn};
-use tracing_subscriber::{EnvFilter};
-use std::fs::OpenOptions;
+use tracing_subscriber::{fmt, EnvFilter, prelude::*, Registry};
+
+use time::OffsetDateTime; // used to compute token expiry
 
 #[derive(Debug, Clone)]
 enum Modal {
@@ -45,6 +48,7 @@ enum AddInputMode { Name, Value }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
+    Welcome,
     VaultSelection,
     Secrets,
 }
@@ -56,7 +60,7 @@ enum AppEvent {
     CacheVaultSecrets(String, Vec<String>), // vault_name -> cached secrets (silent)
     OpenEdit(String, String),
     Message(String),
-    TokenCached(Instant, Duration), // fetched_at, ttl
+    TokenCached(String, Instant, Duration), // token, fetched_at, ttl
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +71,7 @@ struct VaultCacheEntry {
 
 #[derive(Debug, Clone)]
 struct TokenCache {
+    _token: String, // leading underscore to avoid "never read" warning
     fetched_at: Instant,
     ttl: Duration,
 }
@@ -74,7 +79,6 @@ struct TokenCache {
 struct App {
     screen: AppScreen,
     credential: Arc<DeveloperToolsCredential>,
-    client: Option<Arc<SecretClient>>,
     current_vault: Option<(String, String)>, // (name, uri)
     secrets: Vec<String>,
     displayed_secrets: Vec<String>,
@@ -88,8 +92,9 @@ struct App {
     loading: bool,
     vaults: Vec<(String, String)>,
     vault_selected: usize,
-    token_cache: Option<TokenCache>,                 // in-memory token cache
+    token_cache: Option<TokenCache>,                 // in-memory token cache (token string stored but not used directly)
     vault_secret_cache: HashMap<String, VaultCacheEntry>, // in-memory per-vault cache
+    welcome_shown_at: Instant,
 }
 
 impl App {
@@ -97,9 +102,8 @@ impl App {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
-            screen: AppScreen::VaultSelection,
+            screen: AppScreen::Welcome,
             credential,
-            client: None,
             current_vault: None,
             secrets: Vec::new(),
             displayed_secrets: Vec::new(),
@@ -115,6 +119,7 @@ impl App {
             vault_selected: 0,
             token_cache: None,
             vault_secret_cache: HashMap::new(),
+            welcome_shown_at: Instant::now(),
         }
     }
 
@@ -122,26 +127,46 @@ impl App {
         self.displayed_secrets.get(self.selected).cloned()
     }
 
-    fn token_near_expiry(&self, threshold: Duration) -> bool {
-        if let Some(tc) = &self.token_cache {
-            let expires_at = tc.fetched_at + tc.ttl;
-            Instant::now() + threshold >= expires_at
-        } else {
-            true // no token -> needs fetch
+    fn token_should_refresh(&self) -> bool {
+        match &self.token_cache {
+            None => true,
+            Some(tc) => {
+                let ttl_secs = tc.ttl.as_secs().max(1);
+                // compute 10% of TTL (at least 1s), then cap at 120s
+                let ten_percent = ttl_secs / 10;
+                let threshold_secs = std::cmp::min(120, std::cmp::max(1, ten_percent as u64));
+                let threshold = Duration::from_secs(threshold_secs);
+                let expires_at = tc.fetched_at + tc.ttl;
+                Instant::now() + threshold >= expires_at
+            }
         }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // tracing initialization (enable with RUST_LOG=debug)
-    // let subscriber = FmtSubscriber::builder().with_max_level(tracing::Level::DEBUG).finish();
-    // tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
+    // parse --debug flag early
+    let args: Vec<String> = env::args().collect();
+    let debug_mode = args.iter().any(|s| s == "--debug");
 
-    init_tracing();
+    // initialize tracing to file only when --debug is passed
+    if debug_mode {
+        // open log file in append mode
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("azure_tui.log")?;
+        // default filter: debug (for verbose investigation)
+        let filter = EnvFilter::new("debug");
+        // build two layers if desired; here we only write to file
+        let fmt_layer = fmt::layer().with_writer(move || file.try_clone().expect("log file clone")).with_target(false);
+        Registry::default().with(filter).with(fmt_layer).init();
+        info!("Tracing initialized to azure_tui.log (debug)");
+    }
 
     info!("Starting Azure Key Vault TUI");
 
+    // Create credential & app
     let credential = DeveloperToolsCredential::new(None)?;
     let mut app = App::new(credential.clone());
 
@@ -158,7 +183,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Semaphore to bound concurrent preload tasks (avoid throttling)
     let preload_concurrency = Arc::new(Semaphore::new(4)); // tune as needed
 
-    // Kick off initial discovery (will also return token info)
+    // Kick off initial discovery (background). The welcome screen will show while this runs.
     {
         let tx2 = tx.clone();
         let cred = credential.clone();
@@ -168,8 +193,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             debug!("Initial discover task started");
             match get_token_then_discover(cred.clone()).await {
                 Ok((token_opt, vaults)) => {
-                    if let Some((fetched_at, ttl)) = token_opt {
-                        let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                    if let Some((token, fetched_at, ttl)) = token_opt {
+                        let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
                     }
                     let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
                 }
@@ -184,6 +209,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut last_tick = Instant::now();
 
     loop {
+        // Advance spinner + redraw periodically
         if last_tick.elapsed() >= tick_rate {
             if app.loading {
                 app.throbber_state.calc_next();
@@ -192,7 +218,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             last_tick = Instant::now();
         }
 
-        // Drain events from background tasks
+        // Auto-dismiss welcome screen after 1.5s
+        if app.screen == AppScreen::Welcome {
+            if app.welcome_shown_at.elapsed() >= Duration::from_millis(1500) {
+                app.screen = AppScreen::VaultSelection;
+            }
+        }
+
+        // Drain background events
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 AppEvent::VaultsLoaded(v) => {
@@ -234,7 +267,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     let mut sorted = secrets.clone();
                     sorted.sort();
                     app.vault_secret_cache.insert(vault_name, VaultCacheEntry { secrets: sorted, refreshed_at: Instant::now() });
-                    // silent, no message
                 }
                 AppEvent::OpenEdit(name, value) => {
                     app.modal = Some(Modal::Edit { name, value });
@@ -245,9 +277,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     app.loading = false;
                     app.message = Some(msg);
                 }
-                AppEvent::TokenCached(fetched_at, ttl) => {
+                AppEvent::TokenCached(_token, fetched_at, ttl) => {
                     debug!("TokenCached (ttl={:?})", ttl);
-                    app.token_cache = Some(TokenCache { fetched_at, ttl });
+                    // we store token string in cache with underscore-prefixed field
+                    app.token_cache = Some(TokenCache { _token: String::new(), fetched_at, ttl });
                 }
             }
         }
@@ -256,12 +289,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if event::poll(Duration::from_millis(20))? {
             match event::read()? {
                 CEvent::Key(KeyEvent { code, .. }) => {
+                    // if user presses any key during welcome, skip it
+                    if app.screen == AppScreen::Welcome {
+                        app.screen = AppScreen::VaultSelection;
+                        continue;
+                    }
+
                     // Modal handling prioritized
                     if let Some(_) = &app.modal {
                         if handle_modal_key(&mut app, code, &tx).await? { continue; }
                     }
 
-                    // Search mode
+                    // Search mode handling
                     if app.search_mode {
                         match code {
                             KeyCode::Esc => { app.search_mode = false; app.search_query.clear(); apply_search(&mut app); }
@@ -278,15 +317,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         break;
                     }
 
-                    // Token near-expiry refresh check (2 minutes threshold)
-                    if app.token_near_expiry(Duration::from_secs(120)) {
+                    // Token near-expiry refresh check
+                    if app.token_should_refresh() {
                         debug!("Token near expiry or missing -> refreshing in background");
                         let tx2 = tx.clone();
                         let cred = app.credential.clone();
                         tokio::spawn(async move {
                             match refresh_token(cred.clone()).await {
                                 Ok((token, fetched_at, ttl)) => {
-                                    let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                    let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
                                 }
                                 Err(e) => {
                                     let _ = tx2.send(AppEvent::Message(format!("Failed to refresh token: {}", e)));
@@ -308,21 +347,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             KeyCode::Enter => {
                                 if let Some((name, uri)) = app.vaults.get(app.vault_selected).cloned() {
                                     app.current_vault = Some((name.clone(), uri.clone()));
-                                    // Scoped borrow: check cache availability without holding borrow across mutable calls
+                                    // check cache existence without holding borrow across mutable calls
                                     let cache_has_entry = app.vault_secret_cache.get(&name).map(|e| e.secrets.len()).unwrap_or(0) > 0;
                                     if cache_has_entry {
-                                        // Use cache immediately
                                         if let Some(entry) = app.vault_secret_cache.get(&name) {
-                                            // capture minimal data then drop borrow
                                             let cached_secrets = entry.secrets.clone();
                                             let refreshed_at = entry.refreshed_at;
-                                            drop(entry); // ensure borrow ends (not strictly necessary here due to clone, but explicit)
+                                            // use cached secrets
                                             app.secrets = cached_secrets;
                                             apply_search(&mut app);
                                             app.screen = AppScreen::Secrets;
                                             app.loading = false;
                                             app.message = Some(format!("Using cached secrets for '{}'", name));
-                                            // if stale, refresh in background
+                                            // refresh silently if older than 30 minutes
                                             let age = Instant::now().duration_since(refreshed_at);
                                             if age > Duration::from_secs(60 * 30) {
                                                 let tx2 = tx.clone();
@@ -333,12 +370,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     let _ = list_secrets_and_cache(client_arc, tx2.clone(), name_clone).await;
                                                 });
                                             }
-                                        } else {
-                                            // shouldn't reach, but fallback to load incremental
-                                            app.screen = AppScreen::Secrets;
                                         }
                                     } else {
-                                        // No cache: load incrementally and cache
+                                        // No cache -> incremental load
                                         app.screen = AppScreen::Secrets;
                                         app.loading = true;
                                         app.message = Some("Loading secrets...".into());
@@ -355,7 +389,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             }
                             KeyCode::Char('v') => {
-                                // Refresh vaults
                                 app.loading = true;
                                 app.message = Some("Refreshing vaults...".into());
                                 let tx2 = tx.clone();
@@ -363,8 +396,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 tokio::spawn(async move {
                                     match get_token_then_discover(cred.clone()).await {
                                         Ok((token_opt, vaults)) => {
-                                            if let Some((fetched_at, ttl)) = token_opt {
-                                                let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                            if let Some((token, fetched_at, ttl)) = token_opt {
+                                                let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
                                             }
                                             let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
                                         }
@@ -388,7 +421,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             }
                             KeyCode::Char('v') => {
-                                // Back to vault selection and refresh vaults
                                 app.screen = AppScreen::VaultSelection;
                                 app.loading = true;
                                 app.message = Some("Refreshing vaults...".into());
@@ -397,8 +429,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 tokio::spawn(async move {
                                     match get_token_then_discover(cred.clone()).await {
                                         Ok((token_opt, vaults)) => {
-                                            if let Some((fetched_at, ttl)) = token_opt {
-                                                let _ = tx2.send(AppEvent::TokenCached(fetched_at, ttl));
+                                            if let Some((token, fetched_at, ttl)) = token_opt {
+                                                let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
                                             }
                                             let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
                                         }
@@ -505,6 +537,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             _ => {}
                         },
+                        AppScreen::Welcome => {},
                     }
                 }
                 _ => {}
@@ -523,9 +556,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// Draw router
 fn draw_ui(f: &mut Frame<'_>, app: &mut App) {
     match app.screen {
+        AppScreen::Welcome => draw_welcome_screen(f),
         AppScreen::VaultSelection => draw_vault_selection_screen(f, app),
         AppScreen::Secrets => draw_secrets_screen(f, app),
     }
+}
+
+/// Welcome ASCII art screen (centered)
+fn draw_welcome_screen(f: &mut Frame<'_>) {
+    let area = f.area();
+    let art = r#"
+     e      888  /   Y88b      / 
+    d8b     888 /     Y88b    /  
+   /Y88b    888/\      Y88b  /   
+  /  Y88b   888  \      Y888/    
+ /____Y88b  888   \      Y8/     
+/      Y88b 888    \      Y      
+                                  "#;
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Azure KeyVault TUI")
+        .title_alignment(Alignment::Center);
+
+    let paragraph = Paragraph::new(art)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .block(block);
+
+    // Draw centered box (use most of the screen)
+    f.render_widget(paragraph, area);
 }
 
 fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &App) {
@@ -886,43 +946,27 @@ async fn preload_all_vaults(credential: Arc<DeveloperToolsCredential>, tx: Unbou
 }
 
 /// Refresh token and return (token_string, fetched_at, ttl).
-/// Uses the SDK get_token and reads expires_on if available.
-/// Refresh token and return (token_string, fetched_at, ttl)
+/// Uses the SDK get_token and reads expires_on (OffsetDateTime) when available.
 async fn refresh_token(credential: Arc<DeveloperToolsCredential>) -> Result<(String, Instant, Duration), Box<dyn Error>> {
     debug!("Refreshing token via SDK");
-    let token_response = credential
-        .get_token(&["https://management.azure.com/.default"], None)
-        .await?;
-
-    // token string
+    let token_response = credential.get_token(&["https://management.azure.com/.default"], None).await?;
     let token_str = token_response.token.secret().to_string();
 
-    // expires_on is OffsetDateTime (not Option) in azure-core v0.29.1
+    // expires_on is an OffsetDateTime in azure-core v0.29.1
     let expires_on: OffsetDateTime = token_response.expires_on;
-
-    // compute TTL from now
     let now = OffsetDateTime::now_utc();
-    let ttl = if expires_on > now {
-        (expires_on - now)
-            .whole_seconds()
-            .max(1)
-            .try_into()
-            .unwrap_or(55 * 60) // fallback if conversion fails (very unlikely)
-    } else {
-        55 * 60
-    };
-
+    let secs_i128 = (expires_on - now).whole_seconds().max(1); // i128
+    // convert i128 -> u64 safely
+    let ttl_secs: u64 = secs_i128.try_into().unwrap_or(55 * 60);
+    let ttl = Duration::from_secs(ttl_secs);
     let fetched_at = Instant::now();
-    let ttl_duration = Duration::from_secs(ttl);
-
-    debug!("Token refreshed, ttl={:?}", ttl_duration);
-
-    Ok((token_str, fetched_at, ttl_duration))
+    debug!("Token refreshed, ttl={:?}", ttl);
+    Ok((token_str, fetched_at, ttl))
 }
 
-/// Get token then discover vaults in ARM (parallel per-subscription). Returns optional token info and vault list.
-/// If token acquisition fails this returns Err.
-async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>) -> Result<(Option<(Instant, Duration)>, Vec<(String, String)>), Box<dyn Error>> {
+/// Get token then discover vaults in ARM (parallel per-subscription).
+/// Returns optional token info (token_str,fetched_at,ttl) and vault list.
+async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>) -> Result<(Option<(String, Instant, Duration)>, Vec<(String, String)>), Box<dyn Error>> {
     // Acquire token
     let (token_str, fetched_at, ttl) = refresh_token(credential.clone()).await?;
     let client = Client::new();
@@ -932,6 +976,7 @@ async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>) -> R
     let mut vaults: Vec<(String, String)> = Vec::new();
 
     if let Some(arr) = subs["value"].as_array() {
+        // Build per-subscription futures
         let mut futures = Vec::new();
         for sub in arr {
             if let Some(sub_id) = sub["subscriptionId"].as_str() {
@@ -984,10 +1029,10 @@ async fn get_token_then_discover(credential: Arc<DeveloperToolsCredential>) -> R
         }
     }
 
-    Ok((Some((fetched_at, ttl)), vaults))
+    Ok((Some((token_str, fetched_at, ttl)), vaults))
 }
 
-/// Apply fuzzy search to secrets and populate displayed_secrets
+/// Apply fuzzy search to produce displayed_secrets
 fn apply_search(app: &mut App) {
     if app.search_query.is_empty() {
         app.displayed_secrets = app.secrets.clone();
@@ -1003,24 +1048,4 @@ fn apply_search(app: &mut App) {
     }
     app.selected = 0;
     app.list_state.select(Some(0));
-}
-
-
-fn init_tracing() {
-    // Open (or create) the log file in append mode
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("azure_keyvault_tui.log")
-        .expect("Unable to open log file");
-
-    // Configure tracing subscriber
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info")); // fallback to info
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)           // hide module paths if desired
-        .with_writer(file)            // log to file
-        .init();
 }
