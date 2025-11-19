@@ -160,30 +160,103 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
     }
 
     if let Some(modal) = &app.modal {
-        let area_modal = Rect::new(area.width / 8, area.height / 6, area.width * 3 / 4, area.height * 2 / 3);
+        let area = f.area();
+        let area_modal = centered_rect(60, 40, area);
+        f.render_widget(ratatui::widgets::Clear, area_modal);
+        
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title_alignment(Alignment::Center)
+            .style(Style::default().bg(Color::Black));
+
         match modal {
             Modal::Add { name, value, input_mode } => {
-                let mode = if *input_mode == AddInputMode::Name { "(typing name)" } else { "(typing value)" };
-                let text = format!("Add Secret {}\n\nName: {}\nValue: {}\n\nPress Enter to submit, Esc to cancel", mode, name, value);
-                let p = Paragraph::new(text)
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(Block::default().borders(Borders::ALL).title(Span::styled("Add Secret", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
-                f.render_widget(p, area_modal);
+                f.render_widget(block.title("Add Secret"), area_modal);
+                
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(2)
+                    .constraints([
+                        Constraint::Length(3), // Name label + input
+                        Constraint::Length(3), // Value label + input
+                        Constraint::Min(1),    // Help text
+                    ])
+                    .split(area_modal);
+
+                let name_style = if *input_mode == AddInputMode::Name { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) };
+                let value_style = if *input_mode == AddInputMode::Value { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) };
+
+                let name_block = Block::default().borders(Borders::ALL).title("Name");
+                let value_block = Block::default().borders(Borders::ALL).title("Value");
+
+                let p_name = Paragraph::new(name.as_str()).block(name_block).style(name_style);
+                let p_value = Paragraph::new(value.as_str()).block(value_block).style(value_style);
+
+                f.render_widget(p_name, chunks[0]);
+                f.render_widget(p_value, chunks[1]);
+
+                let help_text = "Tab: Switch field | Enter: Submit | Esc: Cancel";
+                let p_help = Paragraph::new(help_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Center);
+                f.render_widget(p_help, chunks[2]);
             }
             Modal::Edit { name, value } => {
-                let text = format!("Edit Secret\n\nName: {}\nValue: {}\n\nPress Enter to save, Esc to cancel", name, value);
-                let p = Paragraph::new(text)
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(Block::default().borders(Borders::ALL).title(Span::styled("Edit Secret", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
-                f.render_widget(p, area_modal);
+                f.render_widget(block.title("Edit Secret"), area_modal);
+                
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(2)
+                    .constraints([
+                        Constraint::Length(3), // Name (read-only)
+                        Constraint::Length(3), // Value (editable)
+                        Constraint::Min(1),    // Help text
+                    ])
+                    .split(area_modal);
+
+                let name_block = Block::default().borders(Borders::ALL).title("Name (Read-only)");
+                let value_block = Block::default().borders(Borders::ALL).title("Value");
+
+                let p_name = Paragraph::new(name.as_str()).block(name_block).style(Style::default().fg(Color::DarkGray));
+                let p_value = Paragraph::new(value.as_str()).block(value_block).style(Style::default().fg(Color::Yellow));
+
+                f.render_widget(p_name, chunks[0]);
+                f.render_widget(p_value, chunks[1]);
+
+                let help_text = "Enter: Save | Esc: Cancel";
+                let p_help = Paragraph::new(help_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Center);
+                f.render_widget(p_help, chunks[2]);
             }
             Modal::ConfirmDelete { name } => {
-                let text = format!("Delete secret '{}' ?\n\nPress 'y' to confirm, Esc to cancel", name);
+                let area_confirm = centered_rect(40, 20, area);
+                f.render_widget(ratatui::widgets::Clear, area_confirm);
+                let block = Block::default().borders(Borders::ALL).title("Confirm Delete").style(Style::default().bg(Color::Red));
+                let text = format!("\nAre you sure you want to delete\n'{}'?\n\n(y) Yes / (n) No", name);
                 let p = Paragraph::new(text)
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(Block::default().borders(Borders::ALL).title(Span::styled("Confirm Delete", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))));
-                f.render_widget(p, area_modal);
+                    .block(block)
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
+                f.render_widget(p, area_confirm);
             }
         }
     }
+}
+
+/// Helper to center a rect
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
