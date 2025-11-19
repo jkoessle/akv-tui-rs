@@ -26,6 +26,7 @@ pub enum AppEvent {
     OpenEdit(String, String),
     Message(String),
     TokenCached(String, Instant, Duration), // token, fetched_at, ttl
+    SecretValueLoaded(String, String, String), // vault_name, secret_name, value
 }
 
 #[derive(Debug, Clone)]

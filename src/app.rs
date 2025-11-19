@@ -34,6 +34,7 @@ pub struct App {
     pub vault_selected: usize,
     pub token_cache: Option<TokenCache>,                 // in-memory token cache (token string stored but not used directly)
     pub vault_secret_cache: HashMap<String, VaultCacheEntry>, // in-memory per-vault cache
+    pub secret_value_cache: HashMap<(String, String), String>, // (vault, secret) -> value
     pub welcome_shown_at: Instant,
 }
 
@@ -59,6 +60,7 @@ impl App {
             vault_selected: 0,
             token_cache: None,
             vault_secret_cache: HashMap::new(),
+            secret_value_cache: HashMap::new(),
             welcome_shown_at: Instant::now(),
         }
     }

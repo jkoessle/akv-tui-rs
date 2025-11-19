@@ -165,6 +165,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     // we store token string in cache with underscore-prefixed field
                     app.token_cache = Some(TokenCache { _token: String::new(), fetched_at, ttl });
                 }
+                AppEvent::SecretValueLoaded(vault, name, value) => {
+                    app.secret_value_cache.insert((vault.clone(), name.clone()), value.clone());
+                    app.loading = false;
+                    let ctx: Result<ClipboardContext, _> = ClipboardProvider::new();
+                    match ctx {
+                        Ok(mut ctx) => {
+                            if ctx.set_contents(value).is_ok() {
+                                app.message = Some(format!("Secret '{}' copied to clipboard", name));
+                            } else {
+                                app.message = Some("Clipboard error".into());
+                            }
+                        }
+                        Err(e) => {
+                            app.message = Some(format!("Clipboard init error: {}", e));
+                        }
+                    }
+                }
             }
         }
 
@@ -231,7 +248,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 if let Some((name, uri)) = app.vaults.get(app.vault_selected).cloned() {
                                     app.current_vault = Some((name.clone(), uri.clone()));
                                     // check cache existence without holding borrow across mutable calls
-                                    let cache_has_entry = app.vault_secret_cache.get(&name).map(|e| e.secrets.len()).unwrap_or(0) > 0;
+                                    let cache_has_entry = app.vault_secret_cache.contains_key(&name);
                                     if cache_has_entry {
                                         if let Some(entry) = app.vault_secret_cache.get(&name) {
                                             let cached_secrets = entry.secrets.clone();
@@ -380,39 +397,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             KeyCode::Enter => {
                                 if let Some(name) = app.selected_name() {
-                                    if let Some((_, uri)) = &app.current_vault {
-                                        app.loading = true;
-                                        app.message = Some("Fetching secret value...".into());
-                                        let name_clone = name.clone();
-                                        let client = SecretClient::new(uri, app.credential.clone(), None)?;
-                                        let client_arc = Arc::new(client);
-                                        let tx2 = tx.clone();
-                                        tokio::spawn(async move {
-                                            match client_arc.get_secret(&name_clone, None).await {
-                                                Ok(resp) => {
-                                                    match resp.into_body() {
-                                                        Ok(secret) => {
-                                                            let value = secret.value.unwrap_or_default();
-                                                            let ctx: Result<ClipboardContext, _> = ClipboardProvider::new();
-                                                            match ctx {
-                                                                Ok(mut ctx) => {
-                                                                    if ctx.set_contents(value.clone()).is_ok() {
-                                                                        let _ = tx2.send(AppEvent::Message(format!("Secret '{}' copied to clipboard", name_clone)));
-                                                                    } else {
-                                                                        let _ = tx2.send(AppEvent::Message("Clipboard error".into()));
-                                                                    }
-                                                                }
-                                                                Err(e) => {
-                                                                    let _ = tx2.send(AppEvent::Message(format!("Clipboard init error: {}", e)));
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to read secret value: {}", e))); }
+                                    if let Some((vault_name, vault_uri)) = &app.current_vault {
+                                        // Check cache first
+                                        if let Some(cached_val) = app.secret_value_cache.get(&(vault_name.clone(), name.clone())) {
+                                            let ctx: Result<ClipboardContext, _> = ClipboardProvider::new();
+                                            match ctx {
+                                                Ok(mut ctx) => {
+                                                    if ctx.set_contents(cached_val.clone()).is_ok() {
+                                                        app.message = Some(format!("Secret '{}' copied to clipboard (cached)", name));
+                                                    } else {
+                                                        app.message = Some("Clipboard error".into());
                                                     }
                                                 }
-                                                Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to get secret: {}", e))); }
+                                                Err(e) => {
+                                                    app.message = Some(format!("Clipboard init error: {}", e));
+                                                }
                                             }
-                                        });
+                                        } else {
+                                            // Not in cache, fetch it
+                                            app.loading = true;
+                                            app.message = Some("Fetching secret value...".into());
+                                            let name_clone = name.clone();
+                                            let vault_name_clone = vault_name.clone();
+                                            let client = SecretClient::new(vault_uri, app.credential.clone(), None)?;
+                                            let client_arc = Arc::new(client);
+                                            let tx2 = tx.clone();
+                                            tokio::spawn(async move {
+                                                match client_arc.get_secret(&name_clone, None).await {
+                                                    Ok(resp) => {
+                                                        match resp.into_body() {
+                                                            Ok(secret) => {
+                                                                let value = secret.value.unwrap_or_default();
+                                                                let _ = tx2.send(AppEvent::SecretValueLoaded(vault_name_clone, name_clone, value));
+                                                            }
+                                                            Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to read secret value: {}", e))); }
+                                                        }
+                                                    }
+                                                    Err(e) => { let _ = tx2.send(AppEvent::Message(format!("Failed to get secret: {}", e))); }
+                                                }
+                                            });
+                                        }
                                     } else {
                                         app.message = Some("No vault selected".into());
                                     }
