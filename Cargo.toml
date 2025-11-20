@@ -1,7 +1,12 @@
 [package]
 name = "akv-tui-rs"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+description = "A TUI for Azure Key Vault"
+license = "Apache-2.0"
+repository = "https://github.com/jkoessle/akv-tui-rs"
+homepage = "https://github.com/jkoessle/akv-tui-rs"
+documentation = "https://github.com/jkoessle/akv-tui-rs"
 
 [[bin]]
 name = "akv"
