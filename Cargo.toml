@@ -1,6 +1,6 @@
 [package]
 name = "akv-tui-rs"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 description = "A TUI for Azure Key Vault"
 license = "Apache-2.0"
