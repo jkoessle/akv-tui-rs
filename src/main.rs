@@ -28,7 +28,7 @@ use app::{App, apply_search, handle_modal_key};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // parse --debug flag early
+    // parse flags
     let args: Vec<String> = env::args().collect();
     let debug_mode = args.iter().any(|s| s == "--debug");
 

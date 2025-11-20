@@ -3,6 +3,10 @@ name = "azure-keyvault-tui"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "akv"
+path = "src/main.rs"
+
 [dependencies]
 azure_security_keyvault_secrets = "0.8.0"
 tokio = { version = "1", features = ["full"] }
