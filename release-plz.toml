@@ -1,0 +1,7 @@
+[workspace]
+allow_dirty = false
+dependencies_update = true 
+
+[[package]]
+name = "azure-keyvault-tui"
+semver_check = false # Disable semver check to avoid potential issues with crate download/verification
