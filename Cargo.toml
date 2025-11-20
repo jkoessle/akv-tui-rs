@@ -1,6 +1,6 @@
 [package]
-name = "azure-keyvault-tui"
-version = "0.1.1"
+name = "akv-tui-rs"
+version = "0.1.0"
 edition = "2024"
 
 [[bin]]
