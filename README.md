@@ -6,6 +6,9 @@
 
 A terminal user interface (TUI) for managing Azure Key Vault secrets, written in Rust.
 
+[![Release-plz](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml/badge.svg)](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml)
+[![Crates.io](https://img.shields.io/crates/v/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
+[![Downloads](https://img.shields.io/crates/d/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
 ## Features
