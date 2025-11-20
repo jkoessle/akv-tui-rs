@@ -41,6 +41,14 @@ cargo install akv-tui-rs
 You can download the pre-built binary for your platform from the [Releases](https://github.com/jkoessle/akv-tui-rs/releases) page.
 
 ### Build from Source
+
+#### Prerequisites (Linux)
+On Linux, you might need to install XCB development libraries:
+```bash
+sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
+```
+
+#### Steps
 1. Clone the repository:
    ```bash
    git clone https://github.com/jkoessle/akv-tui-rs.git
