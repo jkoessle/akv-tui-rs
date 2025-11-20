@@ -4,12 +4,29 @@
 
 # Azure Key Vault TUI
 
-A terminal user interface (TUI) for managing Azure Key Vault secrets, written in Rust.
+**A fast, intuitive terminal user interface for managing Azure Key Vault secrets**
+
+Manage your Azure Key Vault secrets directly from your terminal with a powerful TUI built in Rust. Features fuzzy search, clipboard integration, and cross-platform support for Linux, macOS, and Windows.
 
 [![Release-plz](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml/badge.svg)](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml)
 [![Crates.io](https://img.shields.io/crates/v/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
 [![Downloads](https://img.shields.io/crates/d/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+## Why akv-tui-rs?
+
+- **⚡ Fast & Efficient**: Built with Rust for maximum performance and minimal resource usage
+- **🔍 Fuzzy Search**: Quickly find secrets with intelligent fuzzy matching
+- **📋 Clipboard Integration**: Copy secret values with a single keypress
+- **💾 Smart Caching**: Reduces API calls and improves response times
+- **🖥️ Cross-Platform**: Works seamlessly on Linux, macOS, and Windows
+- **🎯 Intuitive**: Vim-style keybindings and clean interface for productivity
+
+## Use Cases
+
+- **DevOps Engineers**: Quickly retrieve secrets during deployment and troubleshooting
+- **Developers**: Access API keys, connection strings, and credentials without leaving the terminal
+- **Security Teams**: Audit and manage secrets across multiple Azure Key Vaults
 
 ## Features
 
@@ -103,6 +120,34 @@ sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
   ```bash
   cargo run -- --debug
   ```
+
+## Troubleshooting
+
+### Authentication Issues
+- Ensure you're logged in with Azure CLI: `az login`
+- Verify you have appropriate permissions on the Key Vault (Get, List permissions for secrets)
+- Check your Azure subscription is active: `az account show`
+
+### Build Issues on Linux
+If you encounter linking errors related to XCB libraries:
+```bash
+sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
+```
+
+### Clipboard Not Working
+- **Linux**: Ensure `xclip` or `xsel` is installed
+- **macOS**: Clipboard should work out of the box
+- **Windows**: Clipboard should work out of the box
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Related Projects
+
+- [Azure CLI](https://github.com/Azure/azure-cli) - Official Azure command-line interface
+- [ratatui](https://github.com/ratatui-org/ratatui) - The TUI framework powering this tool
+- [azure-sdk-for-rust](https://github.com/Azure/azure-sdk-for-rust) - Azure SDK for Rust
 
 ## License
 
