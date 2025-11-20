@@ -23,6 +23,10 @@ jobs:
       - &install-rust
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install XCB dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
@@ -44,6 +48,10 @@ jobs:
     steps:
       - *checkout
       - *install-rust
+      - name: Install XCB dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:

@@ -6,6 +6,9 @@
 
 A terminal user interface (TUI) for managing Azure Key Vault secrets, written in Rust.
 
+[![Release-plz](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml/badge.svg)](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml)
+[![Crates.io](https://img.shields.io/crates/v/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
+[![Downloads](https://img.shields.io/crates/d/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
 ## Features
@@ -41,6 +44,14 @@ cargo install akv-tui-rs
 You can download the pre-built binary for your platform from the [Releases](https://github.com/jkoessle/akv-tui-rs/releases) page.
 
 ### Build from Source
+
+#### Prerequisites (Linux)
+On Linux, you might need to install XCB development libraries:
+```bash
+sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
+```
+
+#### Steps
 1. Clone the repository:
    ```bash
    git clone https://github.com/jkoessle/akv-tui-rs.git
