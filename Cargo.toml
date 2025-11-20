@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/jkoessle/akv-tui-rs"
 homepage = "https://github.com/jkoessle/akv-tui-rs"
 documentation = "https://github.com/jkoessle/akv-tui-rs"
-keywords = ["azure", "keyvault", "tui", "terminal", "secrets", "cli"]
+keywords = ["azure", "keyvault", "tui", "terminal", "secrets"]
 categories = ["command-line-utilities", "cli"]
 
 [[bin]]
