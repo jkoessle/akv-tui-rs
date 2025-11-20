@@ -18,6 +18,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "akv-tui-rs"
+version = "0.0.1"
+dependencies = [
+ "azure_core",
+ "azure_identity",
+ "azure_security_keyvault_secrets",
+ "clipboard",
+ "crossterm 0.29.0",
+ "dotenv",
+ "futures",
+ "fuzzy-matcher",
+ "ratatui",
+ "reqwest",
+ "serde_json",
+ "throbber-widgets-tui",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -63,28 +85,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "azure-keyvault-tui"
-version = "0.1.1"
-dependencies = [
- "azure_core",
- "azure_identity",
- "azure_security_keyvault_secrets",
- "clipboard",
- "crossterm 0.29.0",
- "dotenv",
- "futures",
- "fuzzy-matcher",
- "ratatui",
- "reqwest",
- "serde_json",
- "throbber-widgets-tui",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "azure_core"
