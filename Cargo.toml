@@ -1,6 +1,6 @@
 [package]
 name = "akv-tui-rs"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "A fast, intuitive terminal user interface (TUI) for managing Azure Key Vault secrets with fuzzy search, clipboard integration, and cross-platform support"
 license = "Apache-2.0"
