@@ -1,0 +1,26 @@
+[package]
+name = "azure-keyvault-tui"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "akv"
+path = "src/main.rs"
+
+[dependencies]
+azure_security_keyvault_secrets = "0.8.0"
+tokio = { version = "1", features = ["full"] }
+azure_identity = "0.29.0"
+ratatui = "0.29.0"
+crossterm = "0.29.0"
+futures = "0.3.31"
+dotenv = "0.15.0"
+clipboard = "0.5.0"
+fuzzy-matcher = "0.3.7"
+throbber-widgets-tui = "0.9.0"
+serde_json = "1.0.145"
+reqwest = { version = "0.12.23", features = ["json"]}
+azure_core = "0.29.1"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"]}
+time = "0.3.44"
