@@ -3,10 +3,19 @@ name: Release Binaries
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Release-plz"]
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build-binaries:
     name: Build Binaries
+    # Only run if triggered by release event or if workflow_run was successful
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     strategy:
       matrix:
         include:
@@ -36,6 +45,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
 
+      - name: Get latest release tag
+        id: get_release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --verbose
       
@@ -49,4 +70,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: akv-${{ matrix.target }}
           asset_name: akv-${{ matrix.target }}
-          tag: ${{ github.ref }}
+          tag: ${{ steps.get_release.outputs.tag }}
+
