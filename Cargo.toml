@@ -2,11 +2,13 @@
 name = "akv-tui-rs"
 version = "0.0.2"
 edition = "2024"
-description = "A TUI for Azure Key Vault"
+description = "A fast, intuitive terminal user interface (TUI) for managing Azure Key Vault secrets with fuzzy search, clipboard integration, and cross-platform support"
 license = "Apache-2.0"
 repository = "https://github.com/jkoessle/akv-tui-rs"
 homepage = "https://github.com/jkoessle/akv-tui-rs"
 documentation = "https://github.com/jkoessle/akv-tui-rs"
+keywords = ["azure", "keyvault", "tui", "terminal", "secrets", "cli"]
+categories = ["command-line-utilities", "cli"]
 
 [[bin]]
 name = "akv"
