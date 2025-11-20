@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "akv-tui-rs"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "azure_core",
  "azure_identity",
