@@ -1,8 +1,14 @@
-use ratatui::{Frame, layout::{Constraint, Direction, Layout, Rect, Alignment}, widgets::{Block, Borders, List, ListItem, Paragraph}, style::{Color, Modifier, Style}, text::Span};
-use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX};
+use ratatui::{
+    Frame,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+};
+use throbber_widgets_tui::{BRAILLE_SIX, Throbber, WhichUse};
 
-use crate::model::{AppScreen, Modal, AddInputMode};
 use crate::app::App;
+use crate::model::{AddInputMode, AppScreen, Modal};
 
 /// Draw router
 pub fn draw_ui(f: &mut Frame<'_>, app: &mut App) {
@@ -32,7 +38,11 @@ fn draw_welcome_screen(f: &mut Frame<'_>) {
 
     let paragraph = Paragraph::new(art)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(block);
 
     // Draw centered box (use most of the screen)
@@ -51,7 +61,10 @@ fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &App) {
     let items: Vec<ListItem> = if app.vaults.is_empty() {
         vec![ListItem::new("No vaults found yet...")]
     } else {
-        app.vaults.iter().map(|(n, _)| ListItem::new(n.clone())).collect()
+        app.vaults
+            .iter()
+            .map(|(n, _)| ListItem::new(n.clone()))
+            .collect()
     };
 
     let mut list_state = ratatui::widgets::ListState::default();
@@ -59,9 +72,11 @@ fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &App) {
         list_state.select(Some(app.vault_selected));
     }
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_stateful_widget(list, inner, &mut list_state);
 
     if app.loading {
@@ -94,12 +109,12 @@ fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &App) {
 
 fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
-    let outer_block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            "Azure Key Vault Manager",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ));
+    let outer_block = Block::default().borders(Borders::ALL).title(Span::styled(
+        "Azure Key Vault Manager",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
     f.render_widget(outer_block, area);
     let inner = Rect {
         x: area.x + 1,
@@ -119,19 +134,34 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
         ])
         .split(inner);
 
-    let vault_label = app.current_vault.as_ref().map(|(n, _)| format!(" (Vault: {})", n)).unwrap_or_default();
+    let vault_label = app
+        .current_vault
+        .as_ref()
+        .map(|(n, _)| format!(" (Vault: {})", n))
+        .unwrap_or_default();
     let header_text = if app.search_mode {
         format!("🔍 Search: {}_", app.search_query)
     } else {
-        format!("🔑 Azure Key Vault TUI{} — [q: quit] [v: vault] [/: search] [a: add] [e: edit] [d: delete] [r: refresh] [Enter: copy]", vault_label)
+        format!(
+            "🔑 Azure Key Vault TUI{} — [q: quit] [v: vault] [/: search] [a: add] [e: edit] [d: delete] [r: refresh] [Enter: copy]",
+            vault_label
+        )
     };
 
     let header = Paragraph::new(header_text)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL).title("Header"));
     f.render_widget(header, chunks[0]);
 
-    let items: Vec<ListItem> = app.displayed_secrets.iter().map(|s| ListItem::new(s.clone())).collect();
+    let items: Vec<ListItem> = app
+        .displayed_secrets
+        .iter()
+        .map(|s| ListItem::new(s.clone()))
+        .collect();
     let mut list_state = app.list_state.clone();
     if app.displayed_secrets.is_empty() {
         list_state.select(None);
@@ -140,7 +170,11 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
     }
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title("Secrets"))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     f.render_stateful_widget(list, chunks[1], &mut list_state);
     app.list_state = list_state;
 
@@ -163,16 +197,20 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
         let area = f.area();
         let area_modal = centered_rect(60, 40, area);
         f.render_widget(ratatui::widgets::Clear, area_modal);
-        
+
         let block = Block::default()
             .borders(Borders::ALL)
             .title_alignment(Alignment::Center)
             .style(Style::default().bg(Color::Black));
 
         match modal {
-            Modal::Add { name, value, input_mode } => {
+            Modal::Add {
+                name,
+                value,
+                input_mode,
+            } => {
                 f.render_widget(block.title("Add Secret"), area_modal);
-                
+
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .margin(2)
@@ -183,25 +221,39 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
                     ])
                     .split(area_modal);
 
-                let name_style = if *input_mode == AddInputMode::Name { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) };
-                let value_style = if *input_mode == AddInputMode::Value { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) };
+                let name_style = if *input_mode == AddInputMode::Name {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let value_style = if *input_mode == AddInputMode::Value {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::White)
+                };
 
                 let name_block = Block::default().borders(Borders::ALL).title("Name");
                 let value_block = Block::default().borders(Borders::ALL).title("Value");
 
-                let p_name = Paragraph::new(name.as_str()).block(name_block).style(name_style);
-                let p_value = Paragraph::new(value.as_str()).block(value_block).style(value_style);
+                let p_name = Paragraph::new(name.as_str())
+                    .block(name_block)
+                    .style(name_style);
+                let p_value = Paragraph::new(value.as_str())
+                    .block(value_block)
+                    .style(value_style);
 
                 f.render_widget(p_name, chunks[0]);
                 f.render_widget(p_value, chunks[1]);
 
                 let help_text = "Tab: Switch field | Enter: Submit | Esc: Cancel";
-                let p_help = Paragraph::new(help_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Center);
+                let p_help = Paragraph::new(help_text)
+                    .style(Style::default().fg(Color::Gray))
+                    .alignment(Alignment::Center);
                 f.render_widget(p_help, chunks[2]);
             }
             Modal::Edit { name, value } => {
                 f.render_widget(block.title("Edit Secret"), area_modal);
-                
+
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .margin(2)
@@ -212,28 +264,46 @@ fn draw_secrets_screen(f: &mut Frame<'_>, app: &mut App) {
                     ])
                     .split(area_modal);
 
-                let name_block = Block::default().borders(Borders::ALL).title("Name (Read-only)");
+                let name_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Name (Read-only)");
                 let value_block = Block::default().borders(Borders::ALL).title("Value");
 
-                let p_name = Paragraph::new(name.as_str()).block(name_block).style(Style::default().fg(Color::DarkGray));
-                let p_value = Paragraph::new(value.as_str()).block(value_block).style(Style::default().fg(Color::Yellow));
+                let p_name = Paragraph::new(name.as_str())
+                    .block(name_block)
+                    .style(Style::default().fg(Color::DarkGray));
+                let p_value = Paragraph::new(value.as_str())
+                    .block(value_block)
+                    .style(Style::default().fg(Color::Yellow));
 
                 f.render_widget(p_name, chunks[0]);
                 f.render_widget(p_value, chunks[1]);
 
                 let help_text = "Enter: Save | Esc: Cancel";
-                let p_help = Paragraph::new(help_text).style(Style::default().fg(Color::Gray)).alignment(Alignment::Center);
+                let p_help = Paragraph::new(help_text)
+                    .style(Style::default().fg(Color::Gray))
+                    .alignment(Alignment::Center);
                 f.render_widget(p_help, chunks[2]);
             }
             Modal::ConfirmDelete { name } => {
                 let area_confirm = centered_rect(40, 20, area);
                 f.render_widget(ratatui::widgets::Clear, area_confirm);
-                let block = Block::default().borders(Borders::ALL).title("Confirm Delete").style(Style::default().bg(Color::Red));
-                let text = format!("\nAre you sure you want to delete\n'{}'?\n\n(y) Yes / (n) No", name);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Confirm Delete")
+                    .style(Style::default().bg(Color::Red));
+                let text = format!(
+                    "\nAre you sure you want to delete\n'{}'?\n\n(y) Yes / (n) No",
+                    name
+                );
                 let p = Paragraph::new(text)
                     .block(block)
                     .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
+                    .style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    );
                 f.render_widget(p, area_confirm);
             }
         }
