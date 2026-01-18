@@ -126,9 +126,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     apply_vault_search(&mut app); // Update displayed_vaults
                     app.loading = false;
                     if app.displayed_vaults.is_empty() {
-                         // If empty, message depends on if it's because of search or no vaults at all.
-                         // But here we just loaded fresh, so search query should be empty effectively (or applied).
-                         // If search query was active during load (unlikely logic path but possible), we respect it.
+                        // If empty, message depends on if it's because of search or no vaults at all.
+                        // But here we just loaded fresh, so search query should be empty effectively (or applied).
+                        // If search query was active during load (unlikely logic path but possible), we respect it.
                         if app.vaults.is_empty() {
                             app.message = Some("No vaults found (press 'v' to retry)".into());
                         } else {
@@ -247,301 +247,309 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                    // Modal handling prioritized
-                    if handle_modal_key(&mut app, code, &tx).await? {
-                        continue;
-                    }
+                // Modal handling prioritized
+                if handle_modal_key(&mut app, code, &tx).await? {
+                    continue;
+                }
 
-                    // Search mode handling
-                    if app.search_mode {
-                        match code {
-                            KeyCode::Esc => {
-                                app.search_mode = false;
-                                app.search_query.clear();
-                                apply_search(&mut app);
-                            }
-                            KeyCode::Enter => {
-                                app.search_mode = false;
-                            }
-                            KeyCode::Backspace => {
-                                app.search_query.pop();
-                                apply_search(&mut app);
-                            }
-                            KeyCode::Char(c) => {
-                                app.search_query.push(c);
-                                apply_search(&mut app);
-                            }
-                            _ => {}
+                // Search mode handling
+                if app.search_mode {
+                    match code {
+                        KeyCode::Esc => {
+                            app.search_mode = false;
+                            app.search_query.clear();
+                            apply_search(&mut app);
                         }
-                        continue;
+                        KeyCode::Enter => {
+                            app.search_mode = false;
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                            apply_search(&mut app);
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                            apply_search(&mut app);
+                        }
+                        _ => {}
                     }
+                    continue;
+                }
 
-                    // Global quit
-                    if code == KeyCode::Char('q') || code == KeyCode::Esc {
-                        break;
-                    }
+                // Global quit
+                if code == KeyCode::Char('q') || code == KeyCode::Esc {
+                    break;
+                }
 
-                    // Token near-expiry refresh check
-                    if app.token_should_refresh() {
-                        debug!("Token near expiry or missing -> refreshing in background");
-                        let tx2 = tx.clone();
-                        let cred = app.credential.clone();
-                        tokio::spawn(async move {
-                            match refresh_token(cred.clone()).await {
-                                Ok((token, fetched_at, ttl)) => {
-                                    let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
-                                }
-                                Err(e) => {
-                                    let _ = tx2.send(AppEvent::Message(format!(
-                                        "Failed to refresh token: {}",
-                                        e
-                                    )));
-                                }
+                // Token near-expiry refresh check
+                if app.token_should_refresh() {
+                    debug!("Token near expiry or missing -> refreshing in background");
+                    let tx2 = tx.clone();
+                    let cred = app.credential.clone();
+                    tokio::spawn(async move {
+                        match refresh_token(cred.clone()).await {
+                            Ok((token, fetched_at, ttl)) => {
+                                let _ = tx2.send(AppEvent::TokenCached(token, fetched_at, ttl));
                             }
-                        });
-                    }
+                            Err(e) => {
+                                let _ = tx2.send(AppEvent::Message(format!(
+                                    "Failed to refresh token: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    });
+                }
 
-                    match app.screen {
-                        AppScreen::VaultSelection => {
-                            if app.vault_search_mode {
-                                match code {
-                                    KeyCode::Esc => {
-                                        app.vault_search_mode = false;
-                                        app.vault_search_query.clear();
-                                        apply_vault_search(&mut app);
-                                    }
-                                    KeyCode::Enter => {
-                                        app.vault_search_mode = false;
-                                    }
-                                    KeyCode::Backspace => {
-                                        app.vault_search_query.pop();
-                                        apply_vault_search(&mut app);
-                                    }
-                                    KeyCode::Char(c) => {
-                                        app.vault_search_query.push(c);
-                                        apply_vault_search(&mut app);
-                                    }
-                                    _ => {}
+                match app.screen {
+                    AppScreen::VaultSelection => {
+                        if app.vault_search_mode {
+                            match code {
+                                KeyCode::Esc => {
+                                    app.vault_search_mode = false;
+                                    app.vault_search_query.clear();
+                                    apply_vault_search(&mut app);
                                 }
-                            } else {
-                                match code {
-                                    KeyCode::Char('/') => {
-                                        app.vault_search_mode = true;
-                                        app.vault_search_query.clear();
-                                        apply_vault_search(&mut app);
+                                KeyCode::Enter => {
+                                    app.vault_search_mode = false;
+                                }
+                                KeyCode::Backspace => {
+                                    app.vault_search_query.pop();
+                                    apply_vault_search(&mut app);
+                                }
+                                KeyCode::Char(c) => {
+                                    app.vault_search_query.push(c);
+                                    apply_vault_search(&mut app);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            match code {
+                                KeyCode::Char('/') => {
+                                    app.vault_search_mode = true;
+                                    app.vault_search_query.clear();
+                                    apply_vault_search(&mut app);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if !app.displayed_vaults.is_empty() {
+                                        let current = app.vault_list_state.selected().unwrap_or(0);
+                                        let next =
+                                            (current + 1).min(app.displayed_vaults.len() - 1);
+                                        app.vault_list_state.select(Some(next));
                                     }
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if !app.displayed_vaults.is_empty() {
-                                            let current = app.vault_list_state.selected().unwrap_or(0);
-                                            let next = (current + 1).min(app.displayed_vaults.len() - 1);
-                                            app.vault_list_state.select(Some(next));
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if !app.displayed_vaults.is_empty() {
+                                        let current = app.vault_list_state.selected().unwrap_or(0);
+                                        if current > 0 {
+                                            app.vault_list_state.select(Some(current - 1));
                                         }
                                     }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if !app.displayed_vaults.is_empty() {
-                                            let current = app.vault_list_state.selected().unwrap_or(0);
-                                            if current > 0 {
-                                                app.vault_list_state.select(Some(current - 1));
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Enter => {
-                                        if let Some(selected_idx) = app.vault_list_state.selected() {
-                                            if let Some((name, uri)) =
-                                                app.displayed_vaults.get(selected_idx).cloned()
-                                            {
-                                                app.current_vault = Some((name.clone(), uri.clone()));
-                                                // check cache existence without holding borrow across mutable calls
-                                                let cache_has_entry =
-                                                    app.vault_secret_cache.contains_key(&name);
-                                                if cache_has_entry {
-                                                    if let Some(entry) = app.vault_secret_cache.get(&name) {
-                                                        let cached_secrets = entry.secrets.clone();
-                                                        let refreshed_at = entry.refreshed_at;
-                                                        // use cached secrets
-                                                        app.secrets = cached_secrets;
-                                                        apply_search(&mut app);
-                                                        app.screen = AppScreen::Secrets;
-                                                        app.loading = false;
-                                                        app.message = Some(format!(
-                                                            "Using cached secrets for '{}'",
-                                                            name
-                                                        ));
-                                                        // refresh silently if older than 30 minutes
-                                                        let age = Instant::now().duration_since(refreshed_at);
-                                                        if age > Duration::from_secs(60 * 30) {
-                                                            let tx2 = tx.clone();
-                                                            let client = SecretClient::new(
-                                                                &uri,
-                                                                app.credential.clone(),
-                                                                None,
-                                                            )?;
-                                                            let client_arc = Arc::new(client);
-                                                            let name_clone = name.clone();
-                                                            tokio::spawn(async move {
-                                                                let _ = list_secrets_and_cache(
-                                                                    client_arc,
-                                                                    tx2.clone(),
-                                                                    name_clone,
-                                                                )
-                                                                .await;
-                                                            });
-                                                        }
-                                                    }
-                                                } else {
-                                                    // No cache -> incremental load
+                                }
+                                KeyCode::Enter => {
+                                    if let Some(selected_idx) = app.vault_list_state.selected() {
+                                        if let Some((name, uri)) =
+                                            app.displayed_vaults.get(selected_idx).cloned()
+                                        {
+                                            app.current_vault = Some((name.clone(), uri.clone()));
+                                            // check cache existence without holding borrow across mutable calls
+                                            let cache_has_entry =
+                                                app.vault_secret_cache.contains_key(&name);
+                                            if cache_has_entry {
+                                                if let Some(entry) =
+                                                    app.vault_secret_cache.get(&name)
+                                                {
+                                                    let cached_secrets = entry.secrets.clone();
+                                                    let refreshed_at = entry.refreshed_at;
+                                                    // use cached secrets
+                                                    app.secrets = cached_secrets;
+                                                    apply_search(&mut app);
                                                     app.screen = AppScreen::Secrets;
-                                                    app.loading = true;
-                                                    app.message = Some("Loading secrets...".into());
-                                                    let tx2 = tx.clone();
-                                                    let client =
-                                                        SecretClient::new(&uri, app.credential.clone(), None)?;
-                                                    let client_arc = Arc::new(client);
-                                                    let name_clone = name.clone();
-                                                    tokio::spawn(async move {
-                                                        if let Err(e) = list_secrets_incremental(
-                                                            client_arc,
-                                                            tx2.clone(),
-                                                            name_clone.clone(),
-                                                        )
-                                                        .await
-                                                        {
-                                                            let _ = tx2.send(AppEvent::Message(format!(
+                                                    app.loading = false;
+                                                    app.message = Some(format!(
+                                                        "Using cached secrets for '{}'",
+                                                        name
+                                                    ));
+                                                    // refresh silently if older than 30 minutes
+                                                    let age =
+                                                        Instant::now().duration_since(refreshed_at);
+                                                    if age > Duration::from_secs(60 * 30) {
+                                                        let tx2 = tx.clone();
+                                                        let client = SecretClient::new(
+                                                            &uri,
+                                                            app.credential.clone(),
+                                                            None,
+                                                        )?;
+                                                        let client_arc = Arc::new(client);
+                                                        let name_clone = name.clone();
+                                                        tokio::spawn(async move {
+                                                            let _ = list_secrets_and_cache(
+                                                                client_arc,
+                                                                tx2.clone(),
+                                                                name_clone,
+                                                            )
+                                                            .await;
+                                                        });
+                                                    }
+                                                }
+                                            } else {
+                                                // No cache -> incremental load
+                                                app.screen = AppScreen::Secrets;
+                                                app.loading = true;
+                                                app.message = Some("Loading secrets...".into());
+                                                let tx2 = tx.clone();
+                                                let client = SecretClient::new(
+                                                    &uri,
+                                                    app.credential.clone(),
+                                                    None,
+                                                )?;
+                                                let client_arc = Arc::new(client);
+                                                let name_clone = name.clone();
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = list_secrets_incremental(
+                                                        client_arc,
+                                                        tx2.clone(),
+                                                        name_clone.clone(),
+                                                    )
+                                                    .await
+                                                    {
+                                                        let _ =
+                                                            tx2.send(AppEvent::Message(format!(
                                                                 "Failed to list secrets: {}",
                                                                 e
                                                             )));
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Char('v') => {
-                                        app.loading = true;
-                                        app.message = Some("Refreshing vaults...".into());
-                                        let tx2 = tx.clone();
-                                        let cred = app.credential.clone();
-                                        tokio::spawn(async move {
-                                            match get_token_then_discover(cred.clone()).await {
-                                                Ok((token_opt, vaults)) => {
-                                                    if let Some((token, fetched_at, ttl)) = token_opt {
-                                                        let _ = tx2.send(AppEvent::TokenCached(
-                                                            token, fetched_at, ttl,
-                                                        ));
                                                     }
-                                                    let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx2.send(AppEvent::Message(format!(
-                                                        "Vault discovery failed: {}",
-                                                        e
-                                                    )));
-                                                }
+                                                });
                                             }
-                                        });
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-
-                        AppScreen::Secrets => match code {
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                if !app.displayed_secrets.is_empty() {
-                                    app.selected =
-                                        (app.selected + 1).min(app.displayed_secrets.len() - 1);
-                                    app.list_state.select(Some(app.selected));
-                                }
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                if !app.displayed_secrets.is_empty() {
-                                    if app.selected > 0 {
-                                        app.selected -= 1;
-                                    }
-                                    app.list_state.select(Some(app.selected));
-                                }
-                            }
-                            KeyCode::Char('v') => {
-                                app.screen = AppScreen::VaultSelection;
-                                app.loading = true;
-                                app.message = Some("Refreshing vaults...".into());
-                                let tx2 = tx.clone();
-                                let cred = app.credential.clone();
-                                tokio::spawn(async move {
-                                    match get_token_then_discover(cred.clone()).await {
-                                        Ok((token_opt, vaults)) => {
-                                            if let Some((token, fetched_at, ttl)) = token_opt {
-                                                let _ = tx2.send(AppEvent::TokenCached(
-                                                    token, fetched_at, ttl,
-                                                ));
-                                            }
-                                            let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
-                                        }
-                                        Err(e) => {
-                                            let _ = tx2.send(AppEvent::Message(format!(
-                                                "Vault discovery failed: {}",
-                                                e
-                                            )));
                                         }
                                     }
-                                });
-                            }
-                            KeyCode::Char('r') => {
-                                if app.current_vault.is_none() {
-                                    app.message = Some("No vault selected".into());
-                                } else if let Some((name, uri)) = &app.current_vault {
+                                }
+                                KeyCode::Char('v') => {
                                     app.loading = true;
-                                    app.message = Some("Refreshing secrets...".into());
+                                    app.message = Some("Refreshing vaults...".into());
                                     let tx2 = tx.clone();
-                                    let client =
-                                        SecretClient::new(uri, app.credential.clone(), None)?;
-                                    let client_arc = Arc::new(client);
-                                    let name_clone = name.clone();
+                                    let cred = app.credential.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = list_secrets_incremental(
-                                            client_arc,
-                                            tx2.clone(),
-                                            name_clone.clone(),
-                                        )
-                                        .await
-                                        {
-                                            let _ = tx2.send(AppEvent::Message(format!(
-                                                "Refresh error: {}",
-                                                e
-                                            )));
+                                        match get_token_then_discover(cred.clone()).await {
+                                            Ok((token_opt, vaults)) => {
+                                                if let Some((token, fetched_at, ttl)) = token_opt {
+                                                    let _ = tx2.send(AppEvent::TokenCached(
+                                                        token, fetched_at, ttl,
+                                                    ));
+                                                }
+                                                let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
+                                            }
+                                            Err(e) => {
+                                                let _ = tx2.send(AppEvent::Message(format!(
+                                                    "Vault discovery failed: {}",
+                                                    e
+                                                )));
+                                            }
                                         }
                                     });
                                 }
+                                _ => {}
                             }
-                            KeyCode::Char('a') => {
-                                app.modal = Some(Modal::Add {
-                                    name: String::new(),
-                                    value: String::new(),
-                                    input_mode: AddInputMode::Name,
+                        }
+                    }
+
+                    AppScreen::Secrets => match code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if !app.displayed_secrets.is_empty() {
+                                app.selected =
+                                    (app.selected + 1).min(app.displayed_secrets.len() - 1);
+                                app.list_state.select(Some(app.selected));
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if !app.displayed_secrets.is_empty() {
+                                if app.selected > 0 {
+                                    app.selected -= 1;
+                                }
+                                app.list_state.select(Some(app.selected));
+                            }
+                        }
+                        KeyCode::Char('v') => {
+                            app.screen = AppScreen::VaultSelection;
+                            app.loading = true;
+                            app.message = Some("Refreshing vaults...".into());
+                            let tx2 = tx.clone();
+                            let cred = app.credential.clone();
+                            tokio::spawn(async move {
+                                match get_token_then_discover(cred.clone()).await {
+                                    Ok((token_opt, vaults)) => {
+                                        if let Some((token, fetched_at, ttl)) = token_opt {
+                                            let _ = tx2.send(AppEvent::TokenCached(
+                                                token, fetched_at, ttl,
+                                            ));
+                                        }
+                                        let _ = tx2.send(AppEvent::VaultsLoaded(vaults));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx2.send(AppEvent::Message(format!(
+                                            "Vault discovery failed: {}",
+                                            e
+                                        )));
+                                    }
+                                }
+                            });
+                        }
+                        KeyCode::Char('r') => {
+                            if app.current_vault.is_none() {
+                                app.message = Some("No vault selected".into());
+                            } else if let Some((name, uri)) = &app.current_vault {
+                                app.loading = true;
+                                app.message = Some("Refreshing secrets...".into());
+                                let tx2 = tx.clone();
+                                let client = SecretClient::new(uri, app.credential.clone(), None)?;
+                                let client_arc = Arc::new(client);
+                                let name_clone = name.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = list_secrets_incremental(
+                                        client_arc,
+                                        tx2.clone(),
+                                        name_clone.clone(),
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx2.send(AppEvent::Message(format!(
+                                            "Refresh error: {}",
+                                            e
+                                        )));
+                                    }
                                 });
                             }
-                            KeyCode::Char('d') => {
-                                if let Some(name) = app.selected_name() {
-                                    app.modal = Some(Modal::ConfirmDelete { name });
-                                }
+                        }
+                        KeyCode::Char('a') => {
+                            app.modal = Some(Modal::Add {
+                                name: String::new(),
+                                value: String::new(),
+                                input_mode: AddInputMode::Name,
+                            });
+                        }
+                        KeyCode::Char('d') => {
+                            if let Some(name) = app.selected_name() {
+                                app.modal = Some(Modal::ConfirmDelete { name });
                             }
-                            KeyCode::Char('/') => {
-                                app.search_mode = true;
-                                app.search_query.clear();
-                            }
-                            KeyCode::Char('e') => {
-                                if let Some(name) = app.selected_name() {
-                                    if let Some((_, uri)) = &app.current_vault {
-                                        app.loading = true;
-                                        app.message = Some("Fetching secret for edit...".into());
-                                        let name_clone = name.clone();
-                                        let client =
-                                            SecretClient::new(uri, app.credential.clone(), None)?;
-                                        let client_arc = Arc::new(client);
-                                        let tx2 = tx.clone();
-                                        tokio::spawn(async move {
-                                            match client_arc.get_secret(&name_clone, None).await {
-                                                Ok(resp) => match resp.into_body() {
+                        }
+                        KeyCode::Char('/') => {
+                            app.search_mode = true;
+                            app.search_query.clear();
+                        }
+                        KeyCode::Char('e') => {
+                            if let Some(name) = app.selected_name() {
+                                if let Some((_, uri)) = &app.current_vault {
+                                    app.loading = true;
+                                    app.message = Some("Fetching secret for edit...".into());
+                                    let name_clone = name.clone();
+                                    let client =
+                                        SecretClient::new(uri, app.credential.clone(), None)?;
+                                    let client_arc = Arc::new(client);
+                                    let tx2 = tx.clone();
+                                    tokio::spawn(async move {
+                                        match client_arc.get_secret(&name_clone, None).await {
+                                            Ok(resp) => {
+                                                match resp.into_body() {
                                                     Ok(secret) => {
                                                         let val = secret.value.unwrap_or_default();
                                                         let _ = tx2.send(AppEvent::OpenEdit(
@@ -551,67 +559,64 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     Err(e) => {
                                                         let _ = tx2.send(AppEvent::Message(format!("Failed to parse secret for edit: {}", e)));
                                                     }
-                                                },
-                                                Err(e) => {
-                                                    let _ = tx2.send(AppEvent::Message(format!(
-                                                        "Failed to get secret for edit: {}",
-                                                        e
-                                                    )));
                                                 }
                                             }
-                                        });
-                                    } else {
-                                        app.message = Some("No vault selected".into());
-                                    }
+                                            Err(e) => {
+                                                let _ = tx2.send(AppEvent::Message(format!(
+                                                    "Failed to get secret for edit: {}",
+                                                    e
+                                                )));
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    app.message = Some("No vault selected".into());
                                 }
                             }
-                            KeyCode::Enter => {
-                                if let Some(name) = app.selected_name() {
-                                    if let Some((vault_name, vault_uri)) = &app.current_vault {
-                                        // Check cache first
-                                        if let Some(cached_val) = app
-                                            .secret_value_cache
-                                            .get(&(vault_name.clone(), name.clone()))
-                                        {
-                                            let ctx: Result<ClipboardContext, _> =
-                                                ClipboardProvider::new();
-                                            match ctx {
-                                                Ok(mut ctx) => {
-                                                    if ctx.set_contents(cached_val.clone()).is_ok()
-                                                    {
-                                                        app.message = Some(format!(
-                                                            "Secret '{}' copied to clipboard (cached)",
-                                                            name
-                                                        ));
-                                                    } else {
-                                                        app.message =
-                                                            Some("Clipboard error".into());
-                                                    }
-                                                }
-                                                Err(e) => {
+                        }
+                        KeyCode::Enter => {
+                            if let Some(name) = app.selected_name() {
+                                if let Some((vault_name, vault_uri)) = &app.current_vault {
+                                    // Check cache first
+                                    if let Some(cached_val) = app
+                                        .secret_value_cache
+                                        .get(&(vault_name.clone(), name.clone()))
+                                    {
+                                        let ctx: Result<ClipboardContext, _> =
+                                            ClipboardProvider::new();
+                                        match ctx {
+                                            Ok(mut ctx) => {
+                                                if ctx.set_contents(cached_val.clone()).is_ok() {
                                                     app.message = Some(format!(
-                                                        "Clipboard init error: {}",
-                                                        e
+                                                        "Secret '{}' copied to clipboard (cached)",
+                                                        name
                                                     ));
+                                                } else {
+                                                    app.message = Some("Clipboard error".into());
                                                 }
                                             }
-                                        } else {
-                                            // Not in cache, fetch it
-                                            app.loading = true;
-                                            app.message = Some("Fetching secret value...".into());
-                                            let name_clone = name.clone();
-                                            let vault_name_clone = vault_name.clone();
-                                            let client = SecretClient::new(
-                                                vault_uri,
-                                                app.credential.clone(),
-                                                None,
-                                            )?;
-                                            let client_arc = Arc::new(client);
-                                            let tx2 = tx.clone();
-                                            tokio::spawn(async move {
-                                                match client_arc.get_secret(&name_clone, None).await
-                                                {
-                                                    Ok(resp) => match resp.into_body() {
+                                            Err(e) => {
+                                                app.message =
+                                                    Some(format!("Clipboard init error: {}", e));
+                                            }
+                                        }
+                                    } else {
+                                        // Not in cache, fetch it
+                                        app.loading = true;
+                                        app.message = Some("Fetching secret value...".into());
+                                        let name_clone = name.clone();
+                                        let vault_name_clone = vault_name.clone();
+                                        let client = SecretClient::new(
+                                            vault_uri,
+                                            app.credential.clone(),
+                                            None,
+                                        )?;
+                                        let client_arc = Arc::new(client);
+                                        let tx2 = tx.clone();
+                                        tokio::spawn(async move {
+                                            match client_arc.get_secret(&name_clone, None).await {
+                                                Ok(resp) => {
+                                                    match resp.into_body() {
                                                         Ok(secret) => {
                                                             let value =
                                                                 secret.value.unwrap_or_default();
@@ -626,26 +631,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         Err(e) => {
                                                             let _ = tx2.send(AppEvent::Message(format!("Failed to read secret value: {}", e)));
                                                         }
-                                                    },
-                                                    Err(e) => {
-                                                        let _ = tx2.send(AppEvent::Message(
-                                                            format!("Failed to get secret: {}", e),
-                                                        ));
                                                     }
                                                 }
-                                            });
-                                        }
-                                    } else {
-                                        app.message = Some("No vault selected".into());
+                                                Err(e) => {
+                                                    let _ = tx2.send(AppEvent::Message(format!(
+                                                        "Failed to get secret: {}",
+                                                        e
+                                                    )));
+                                                }
+                                            }
+                                        });
                                     }
+                                } else {
+                                    app.message = Some("No vault selected".into());
                                 }
                             }
-                            _ => {}
-                        },
-                        AppScreen::Welcome => {}
-                    }
+                        }
+                        _ => {}
+                    },
+                    AppScreen::Welcome => {}
                 }
-
+            }
         }
     }
 

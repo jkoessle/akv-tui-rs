@@ -51,15 +51,13 @@ fn draw_welcome_screen(f: &mut Frame<'_>) {
 
 fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
-    
+
     let title = if app.vault_search_mode {
         format!("🔐 Select Vault (Search: {}_ )", app.vault_search_query)
+    } else if !app.vault_search_query.is_empty() {
+        format!("🔐 Select Vault (Filter: {})", app.vault_search_query)
     } else {
-        if !app.vault_search_query.is_empty() {
-             format!("🔐 Select Vault (Filter: {})", app.vault_search_query)
-        } else {
-            "🔐 Select an Azure Key Vault (Press '/' to filter)".to_string()
-        }
+        "🔐 Select an Azure Key Vault (Press '/' to filter)".to_string()
     };
 
     let block = Block::default()
@@ -73,7 +71,7 @@ fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &mut App) {
         if app.vaults.is_empty() {
             vec![ListItem::new("No vaults found yet...")]
         } else {
-             vec![ListItem::new("No matching vaults...")]
+            vec![ListItem::new("No matching vaults...")]
         }
     } else {
         app.displayed_vaults
@@ -81,7 +79,7 @@ fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &mut App) {
             .map(|(n, _)| ListItem::new(n.clone()))
             .collect()
     };
-    
+
     let list = List::new(items).block(block).highlight_style(
         Style::default()
             .fg(Color::Cyan)
