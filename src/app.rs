@@ -31,7 +31,11 @@ pub struct App {
     pub throbber_state: ThrobberState,
     pub loading: bool,
     pub vaults: Vec<(String, String)>,
-    pub vault_selected: usize,
+
+    pub displayed_vaults: Vec<(String, String)>,
+    pub vault_list_state: ListState,
+    pub vault_search_mode: bool,
+    pub vault_search_query: String,
     pub token_cache: Option<TokenCache>, // in-memory token cache (token string stored but not used directly)
     pub vault_secret_cache: HashMap<String, VaultCacheEntry>, // in-memory per-vault cache
     pub secret_value_cache: HashMap<(String, String), String>, // (vault, secret) -> value
@@ -57,7 +61,11 @@ impl App {
             throbber_state: ThrobberState::default(),
             loading: false,
             vaults: Vec::new(),
-            vault_selected: 0,
+
+            displayed_vaults: Vec::new(),
+            vault_list_state: ListState::default(),
+            vault_search_mode: false,
+            vault_search_query: String::new(),
             token_cache: None,
             vault_secret_cache: HashMap::new(),
             secret_value_cache: HashMap::new(),
@@ -105,6 +113,32 @@ pub fn apply_search(app: &mut App) {
     }
     app.selected = 0;
     app.list_state.select(Some(0));
+}
+
+pub fn apply_vault_search(app: &mut App) {
+    if app.vault_search_query.is_empty() {
+        app.displayed_vaults = app.vaults.clone();
+    } else {
+        let matcher = SkimMatcherV2::default();
+        // We match against the vault name (0th element of tuple)
+        let mut results: Vec<(i64, &(String, String))> = app
+            .vaults
+            .iter()
+            .filter_map(|v| {
+                matcher
+                    .fuzzy_match(&v.0, &app.vault_search_query)
+                    .map(|score| (score, v))
+            })
+            .collect();
+        results.sort_by(|a, b| b.0.cmp(&a.0));
+        app.displayed_vaults = results.into_iter().map(|(_, v)| v.clone()).collect();
+    }
+    // Reset selection to top of filtered list
+    if !app.displayed_vaults.is_empty() {
+        app.vault_list_state.select(Some(0));
+    } else {
+        app.vault_list_state.select(None);
+    }
 }
 
 /// Handle modal keys; background tasks clone tx to avoid move errors.

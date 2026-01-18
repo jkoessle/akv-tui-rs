@@ -49,35 +49,45 @@ fn draw_welcome_screen(f: &mut Frame<'_>) {
     f.render_widget(paragraph, area);
 }
 
-fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &App) {
+fn draw_vault_selection_screen(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
+    
+    let title = if app.vault_search_mode {
+        format!("🔐 Select Vault (Search: {}_ )", app.vault_search_query)
+    } else {
+        if !app.vault_search_query.is_empty() {
+             format!("🔐 Select Vault (Filter: {})", app.vault_search_query)
+        } else {
+            "🔐 Select an Azure Key Vault (Press '/' to filter)".to_string()
+        }
+    };
+
     let block = Block::default()
-        .title("🔐 Select an Azure Key Vault")
+        .title(title)
         .borders(Borders::ALL)
         .title_alignment(Alignment::Center);
 
     let inner = block.inner(area);
 
-    let items: Vec<ListItem> = if app.vaults.is_empty() {
-        vec![ListItem::new("No vaults found yet...")]
+    let items: Vec<ListItem> = if app.displayed_vaults.is_empty() {
+        if app.vaults.is_empty() {
+            vec![ListItem::new("No vaults found yet...")]
+        } else {
+             vec![ListItem::new("No matching vaults...")]
+        }
     } else {
-        app.vaults
+        app.displayed_vaults
             .iter()
             .map(|(n, _)| ListItem::new(n.clone()))
             .collect()
     };
-
-    let mut list_state = ratatui::widgets::ListState::default();
-    if !items.is_empty() {
-        list_state.select(Some(app.vault_selected));
-    }
-
+    
     let list = List::new(items).block(block).highlight_style(
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     );
-    f.render_stateful_widget(list, inner, &mut list_state);
+    f.render_stateful_widget(list, inner, &mut app.vault_list_state);
 
     if app.loading {
         let throbber = Throbber::default()
