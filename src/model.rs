@@ -1,15 +1,27 @@
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub enum Modal {
-    Add { name: String, value: String, input_mode: AddInputMode },
-    Edit { name: String, value: String },
-    ConfirmDelete { name: String },
+    Add {
+        name: String,
+        value: String,
+        input_mode: AddInputMode,
+    },
+    Edit {
+        name: String,
+        value: String,
+    },
+    ConfirmDelete {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum AddInputMode { Name, Value }
+pub enum AddInputMode {
+    Name,
+    Value,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppScreen {
@@ -21,7 +33,7 @@ pub enum AppScreen {
 #[derive(Debug)]
 pub enum AppEvent {
     VaultsLoaded(Vec<(String, String)>),
-    SecretsUpdated(String, Vec<String>), // vault_name, secrets
+    SecretsUpdated(String, Vec<String>),    // vault_name, secrets
     CacheVaultSecrets(String, Vec<String>), // vault_name -> cached secrets (silent)
     OpenEdit(String, String),
     Message(String),
