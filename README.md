@@ -1,19 +1,98 @@
 <p align="center">
-  <img src="assets/banner.png" alt="akv-tui banner" width="100%"/>
+  <img src="assets/banner.png" alt="akv-tui banner" width="600"><br>
+  <br>
+  <a href="https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml">
+    <img src="https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://crates.io/crates/akv-tui-rs">
+    <img src="https://img.shields.io/crates/v/akv-tui-rs.svg"></a>
+  <a href="https://crates.io/crates/akv-tui-rs">
+    <img src="https://img.shields.io/crates/d/akv-tui-rs.svg"></a>
+  <a href="https://github.com/jkoessle/akv-tui-rs/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
+  <br>
+  <br>
+  A fast, intuitive terminal user interface for managing Azure Key Vault secrets with fuzzy search, clipboard integration, and cross-platform support.
 </p>
 
-# Azure Key Vault TUI
+<img src="assets/demo.gif" alt="akv-tui demo"/>
 
-**A fast, intuitive terminal user interface for managing Azure Key Vault secrets**
+## Quick Start
 
-Manage your Azure Key Vault secrets directly from your terminal with a powerful TUI built in Rust. Features fuzzy search, clipboard integration, and cross-platform support for Linux, macOS, and Windows.
+### Install
 
-[![Release-plz](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml/badge.svg)](https://github.com/jkoessle/akv-tui-rs/actions/workflows/release.yml)
-[![Crates.io](https://img.shields.io/crates/v/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
-[![Downloads](https://img.shields.io/crates/d/akv-tui-rs.svg)](https://crates.io/crates/akv-tui-rs)
-![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+`akv-tui-rs` runs on Linux, macOS, and Windows. It can be installed from cargo, precompiled binaries, or source.
 
-## Why akv-tui-rs?
+For example, to install from `cargo`:
+
+```shell
+cargo install akv-tui-rs --locked
+```
+
+<details>
+
+<summary>All installation methods</summary>
+
+### Cargo
+
+[![Crates.io](https://img.shields.io/crates/v/akv-tui-rs)](https://crates.io/crates/akv-tui-rs)
+
+```shell
+cargo install akv-tui-rs --locked
+```
+
+### One-line Installer (Linux/macOS)
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/jkoessle/akv-tui-rs/main/install.sh | sh
+```
+
+### Manual Download
+
+Download the pre-built binary for your platform from the [Releases](https://github.com/jkoessle/akv-tui-rs/releases) page.
+
+### Build from Source
+
+#### Prerequisites (Linux)
+
+On Linux, you might need to install XCB development libraries:
+
+```bash
+sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
+```
+
+#### Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/jkoessle/akv-tui-rs.git
+   cd akv-tui-rs
+   ```
+
+2. Run directly:
+   ```bash
+   cargo run
+   ```
+
+3. Or install globally:
+   ```bash
+   cargo install --path .
+   ```
+
+</details>
+
+### Run
+
+To run `akv-tui-rs` with default settings, use the following command:
+
+```shell
+akv
+```
+
+> ⓘ Note:
+>
+> You must be authenticated with Azure CLI (`az login`) before running the tool.
+
+## Features
 
 - **⚡ Fast & Efficient**: Built with Rust for maximum performance and minimal resource usage
 - **🔍 Fuzzy Search**: Quickly find secrets with intelligent fuzzy matching
@@ -22,84 +101,23 @@ Manage your Azure Key Vault secrets directly from your terminal with a powerful 
 - **🖥️ Cross-Platform**: Works seamlessly on Linux, macOS, and Windows
 - **🎯 Intuitive**: Vim-style keybindings and clean interface for productivity
 
-## Use Cases
+### Secret Management
 
-- **DevOps Engineers**: Quickly retrieve secrets during deployment and troubleshooting
-- **Developers**: Access API keys, connection strings, and credentials without leaving the terminal
-- **Security Teams**: Audit and manage secrets across multiple Azure Key Vaults
-
-## Features
-
-- **Vault Discovery**: Automatically discovers accessible Key Vaults in your Azure subscription.
-- **Secret Management**:
-    - List secrets with fuzzy search.
-    - View secret values.
-    - Add new secrets.
-    - Edit existing secrets.
-    - Delete secrets (soft-delete).
-- **Clipboard Integration**: Copy secret values to clipboard with a single keypress.
-- **Caching**: Caches secrets and tokens for improved performance and reduced API calls.
-- **Cross-Platform**: Runs on Linux, macOS, and Windows.
-
-## Installation
-
-### Option 1: One-line Installer (Recommended)
-For Linux and macOS users, you can install the latest release with a single command:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/jkoessle/akv-tui-rs/main/install.sh | sh
-```
-
-### Option 2: Cargo
-If you have Rust installed, you can install via Cargo:
-
-```sh
-cargo install akv-tui-rs
-```
-
-### Option 3: Manual Download
-You can download the pre-built binary for your platform from the [Releases](https://github.com/jkoessle/akv-tui-rs/releases) page.
-
-### Build from Source
-
-#### Prerequisites (Linux)
-On Linux, you might need to install XCB development libraries:
-```bash
-sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
-```
-
-#### Steps
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/jkoessle/akv-tui-rs.git
-   cd akv-tui-rs
-   ```
-2. Run directly:
-   ```bash
-   cargo run
-   ```
-3. Or install globally:
-   ```bash
-   cargo install --path .
-   ```
+- **Vault Discovery**: Automatically discovers accessible Key Vaults in your Azure subscription
+- **List Secrets**: Browse all secrets with fuzzy search filtering
+- **View Values**: Securely view secret values
+- **Add Secrets**: Create new secrets directly from the TUI
+- **Edit Secrets**: Update existing secret values
+- **Delete Secrets**: Soft-delete secrets when no longer needed
 
 ## Usage
 
-1. **Authenticate**: Run `az login` in your terminal if you haven't already.
-2. **Start the Tool**: Run `akv` (or `cargo run`).
-3. **Select Vault**: Use arrow keys or `j`/`k` to select a vault from the list and press `Enter`.
-4. **Manage Secrets**:
-    - **Navigation**: `j`/`k` or `Up`/`Down` to navigate the list.
-    - **Search**: Press `/` to enter search mode. Type to filter secrets. `Esc` to clear/exit search.
-    - **Copy Value**: Press `Enter` on a selected secret to copy its value to the clipboard.
-    - **Add Secret**: Press `a` to add a new secret.
-    - **Edit Secret**: Press `e` to edit the selected secret.
-    - **Delete Secret**: Press `d` to delete the selected secret.
-    - **Refresh**: Press `r` to refresh the secret list for the current vault.
-    - **Switch Vault**: Press `v` to go back to the vault selection screen.
-    - **Quit**: Press `q` or `Esc` to exit.
+1. **Authenticate**: Run `az login` in your terminal if you haven't already
+2. **Start the Tool**: Run `akv`
+3. **Select Vault**: Use arrow keys or `j`/`k` to select a vault from the list and press `Enter`
+4. **Manage Secrets**: Use the keybindings below to interact with secrets
 
-### Keybindings Summary
+### Keybindings
 
 | Key | Action |
 | --- | --- |
@@ -116,28 +134,49 @@ sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
 
 ## Configuration
 
-- **Debug Logging**: Run with `--debug` to enable logging to `azure_tui.log` in the current directory.
-  ```bash
-  cargo run -- --debug
-  ```
+**Debug Logging**: Run with `--debug` to enable logging to `azure_tui.log` in the current directory:
+
+```bash
+akv --debug
+```
+
+## Use Cases
+
+- **DevOps Engineers**: Quickly retrieve secrets during deployment and troubleshooting
+- **Developers**: Access API keys, connection strings, and credentials without leaving the terminal
+- **Security Teams**: Audit and manage secrets across multiple Azure Key Vaults
 
 ## Troubleshooting
 
+<details>
+
+<summary>Common issues and solutions</summary>
+
 ### Authentication Issues
+
 - Ensure you're logged in with Azure CLI: `az login`
 - Verify you have appropriate permissions on the Key Vault (Get, List permissions for secrets)
 - Check your Azure subscription is active: `az account show`
 
 ### Build Issues on Linux
+
 If you encounter linking errors related to XCB libraries:
+
 ```bash
 sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
 ```
 
 ### Clipboard Not Working
+
 - **Linux**: Ensure `xclip` or `xsel` is installed
 - **macOS**: Clipboard should work out of the box
 - **Windows**: Clipboard should work out of the box
+
+</details>
+
+## Acknowledgements
+
+`akv-tui-rs` is made possible by [ratatui](https://github.com/ratatui-org/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm), and the [Azure SDK for Rust](https://github.com/Azure/azure-sdk-for-rust).
 
 ## Contributing
 
@@ -152,3 +191,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
+
+---
+
+*This project was built with the assistance of [Antigravity](https://antigravity.google) and LLMs.*
