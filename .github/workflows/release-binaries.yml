@@ -14,8 +14,13 @@ on:
 jobs:
   build-binaries:
     name: Build Binaries
-    # Only run if triggered by release event or if workflow_run was successful
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Only run if triggered by release event, workflow_dispatch, or if Release-plz workflow was successful
+    if: |
+      github.event_name == 'release' || 
+      github.event_name == 'workflow_dispatch' || 
+      (github.event_name == 'workflow_run' && 
+       github.event.workflow_run.name == 'Release-plz' && 
+       github.event.workflow_run.conclusion == 'success')
     strategy:
       matrix:
         include:
