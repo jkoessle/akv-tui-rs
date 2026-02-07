@@ -100,7 +100,10 @@ async fn discover_resources(
     token_str: &str,
     base_url: &str,
 ) -> Result<Vec<(String, String)>, Box<dyn Error>> {
-    let mut subs_url = Some(format!("{}/subscriptions?api-version={}", base_url, API_VERSION_SUBSCRIPTIONS));
+    let mut subs_url = Some(format!(
+        "{}/subscriptions?api-version={}",
+        base_url, API_VERSION_SUBSCRIPTIONS
+    ));
     let mut subscriptions = Vec::new();
     let mut vaults: Vec<(String, String)> = Vec::new();
 
