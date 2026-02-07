@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use azure_identity::DeveloperToolsCredential;
-use azure_security_keyvault_secrets::SecretClient;
+use azure_security_keyvault_secrets::{SecretClient, models::Secret};
 use clipboard::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent};
 use crossterm::{
@@ -240,7 +240,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Input handling
         if event::poll(Duration::from_millis(20))? {
-            if let CEvent::Key(KeyEvent { code, .. }) = event::read()? {
+            if let CEvent::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
                 // if user presses any key during welcome, skip it
                 if app.screen == AppScreen::Welcome {
                     app.screen = AppScreen::VaultSelection;
@@ -277,7 +277,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
 
                 // Global quit
-                if code == KeyCode::Char('q') || code == KeyCode::Esc {
+                if (modifiers == event::KeyModifiers::CONTROL && code == KeyCode::Char('c'))
+                    || code == KeyCode::Char('q')
+                {
                     break;
                 }
 
@@ -549,7 +551,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     tokio::spawn(async move {
                                         match client_arc.get_secret(&name_clone, None).await {
                                             Ok(resp) => {
-                                                match resp.into_body() {
+                                                let body = resp.into_body();
+                                                match serde_json::from_slice::<Secret>(&body) {
                                                     Ok(secret) => {
                                                         let val = secret.value.unwrap_or_default();
                                                         let _ = tx2.send(AppEvent::OpenEdit(
@@ -557,7 +560,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         ));
                                                     }
                                                     Err(e) => {
-                                                        let _ = tx2.send(AppEvent::Message(format!("Failed to parse secret for edit: {}", e)));
+                                                        let _ = tx2.send(AppEvent::Message(format!("Failed to parse secret JSON: {}", e)));
                                                     }
                                                 }
                                             }
@@ -614,32 +617,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         let client_arc = Arc::new(client);
                                         let tx2 = tx.clone();
                                         tokio::spawn(async move {
-                                            match client_arc.get_secret(&name_clone, None).await {
-                                                Ok(resp) => {
-                                                    match resp.into_body() {
-                                                        Ok(secret) => {
-                                                            let value =
-                                                                secret.value.unwrap_or_default();
-                                                            let _ = tx2.send(
-                                                                AppEvent::SecretValueLoaded(
-                                                                    vault_name_clone,
-                                                                    name_clone,
-                                                                    value,
-                                                                ),
-                                                            );
-                                                        }
-                                                        Err(e) => {
-                                                            let _ = tx2.send(AppEvent::Message(format!("Failed to read secret value: {}", e)));
-                                                        }
+                                        match client_arc.get_secret(&name_clone, None).await {
+                                            Ok(resp) => {
+                                                let body = resp.into_body();
+                                                match serde_json::from_slice::<Secret>(&body) {
+                                                    Ok(secret) => {
+                                                        let value = secret.value.unwrap_or_default();
+                                                        let _ = tx2.send(
+                                                            AppEvent::SecretValueLoaded(
+                                                                vault_name_clone,
+                                                                name_clone,
+                                                                value,
+                                                            ),
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx2.send(AppEvent::Message(format!("Failed to parse secret JSON: {}", e)));
                                                     }
                                                 }
-                                                Err(e) => {
-                                                    let _ = tx2.send(AppEvent::Message(format!(
-                                                        "Failed to get secret: {}",
-                                                        e
-                                                    )));
-                                                }
                                             }
+                                            Err(e) => {
+                                                let _ = tx2.send(AppEvent::Message(format!(
+                                                    "Failed to get secret: {}",
+                                                    e
+                                                )));
+                                            }
+                                        }
                                         });
                                     }
                                 } else {
