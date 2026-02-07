@@ -18,6 +18,10 @@ use tracing::debug;
 
 use crate::model::AppEvent;
 
+const API_VERSION_SUBSCRIPTIONS: &str = "2020-01-01";
+// TODO: Update to 2026-02-01 before Feb 27, 2027 to address RBAC transition.
+const API_VERSION_VAULTS: &str = "2025-05-01";
+
 /// Refresh token and return (token_string, fetched_at, ttl).
 /// Uses the SDK get_token and reads expires_on (OffsetDateTime) when available.
 pub async fn refresh_token(
@@ -96,7 +100,10 @@ async fn discover_resources(
     token_str: &str,
     base_url: &str,
 ) -> Result<Vec<(String, String)>, Box<dyn Error>> {
-    let mut subs_url = Some(format!("{}/subscriptions?api-version=2020-01-01", base_url));
+    let mut subs_url = Some(format!(
+        "{}/subscriptions?api-version={}",
+        base_url, API_VERSION_SUBSCRIPTIONS
+    ));
     let mut subscriptions = Vec::new();
     let mut vaults: Vec<(String, String)> = Vec::new();
 
@@ -125,8 +132,8 @@ async fn discover_resources(
         futures.push(async move {
             let mut vaults_list = Vec::new();
             let mut next_link = Some(format!(
-                "{}/subscriptions/{}/providers/Microsoft.KeyVault/vaults?api-version=2025-05-01",
-                base_url_owned, sub_id
+                "{}/subscriptions/{}/providers/Microsoft.KeyVault/vaults?api-version={}",
+                base_url_owned, sub_id, API_VERSION_VAULTS
             ));
 
             while let Some(url) = next_link {

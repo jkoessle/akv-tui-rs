@@ -178,17 +178,15 @@ pub async fn handle_modal_key(
                 KeyCode::Enter => {
                     if name.is_empty() {
                         app.message = Some("Name cannot be empty".into());
-                    } else if app.current_vault.is_none() {
-                        app.message = Some("No vault selected".into());
-                    } else {
+                    } else if let Some((vault_name, vault_uri)) = &app.current_vault {
                         let secret_name = name.clone();
                         let secret_value = value.clone();
-                        let (vault_name, vault_uri) = app.current_vault.as_ref().unwrap().clone();
+                        let vault_name = vault_name.clone();
                         app.modal = None;
                         app.loading = true;
                         app.message = Some("Creating secret...".into());
                         let tx2 = tx.clone();
-                        let client = SecretClient::new(&vault_uri, app.credential.clone(), None)?;
+                        let client = SecretClient::new(vault_uri, app.credential.clone(), None)?;
                         let client_arc = Arc::new(client);
                         tokio::spawn(async move {
                             let params = SetSecretParameters {
@@ -226,6 +224,8 @@ pub async fn handle_modal_key(
                             )
                             .await;
                         });
+                    } else {
+                        app.message = Some("No vault selected".into());
                     }
                 }
                 KeyCode::Char(c) => match input_mode {
@@ -245,14 +245,12 @@ pub async fn handle_modal_key(
                     value.pop();
                 }
                 KeyCode::Enter => {
-                    if app.current_vault.is_none() {
-                        app.message = Some("No vault selected".into());
-                    } else {
-                        let (vault_name, vault_uri) = app.current_vault.as_ref().unwrap().clone();
-                        let client = SecretClient::new(&vault_uri, app.credential.clone(), None)?;
+                    if let Some((vault_name, vault_uri)) = &app.current_vault {
+                        let client = SecretClient::new(vault_uri, app.credential.clone(), None)?;
                         let client_arc = Arc::new(client);
                         let name_clone = name.clone();
                         let value_clone = value.clone();
+                        let vault_name = vault_name.clone();
                         app.modal = None;
                         app.loading = true;
                         app.message = Some("Updating secret...".into());
@@ -292,6 +290,8 @@ pub async fn handle_modal_key(
                             )
                             .await;
                         });
+                    } else {
+                        app.message = Some("No vault selected".into());
                     }
                 }
                 KeyCode::Char(c) => {
