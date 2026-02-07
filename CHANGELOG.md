@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/jkoessle/akv-tui-rs/compare/v0.1.0...v0.1.1) - 2026-02-07
+
+### Added
+
+- streamline user flow ([#26](https://github.com/jkoessle/akv-tui-rs/pull/26))
+
+### Other
+
+- *(deps)* bump actions/checkout from 4 to 6 ([#25](https://github.com/jkoessle/akv-tui-rs/pull/25))
+- release v0.1.0 ([#21](https://github.com/jkoessle/akv-tui-rs/pull/21))
+
 ## [0.1.0](https://github.com/jkoessle/akv-tui-rs/releases/tag/v0.1.0) - 2026-01-19
 
 ### Added
