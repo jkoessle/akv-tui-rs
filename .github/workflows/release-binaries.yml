@@ -35,7 +35,7 @@ jobs:
             name: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       
       - uses: actions-rs/toolchain@v1
         with:
